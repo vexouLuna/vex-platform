@@ -12,7 +12,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.2",
     "fastapi>=0.115",
     "pydantic>=2.7",
-    "structlog>=24.1",
+    "structlog>=26.1.0",
 ]
 
 [project.optional-dependencies]

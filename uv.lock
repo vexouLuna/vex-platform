@@ -898,7 +898,7 @@ dev = [
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.11" },
-    { name = "pytest", specifier = ">=8" },
+    { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.17.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },

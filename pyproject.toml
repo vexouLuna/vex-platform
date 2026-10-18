@@ -1,6 +1,6 @@
 [project]
 name = "vex-platform"
-version = "0.7.0"
+version = "0.8.0"
 description = "Shared job runtime, API conventions and audit log for twitch-archive and doomtp-bot"
 readme = "README.md"
 requires-python = ">=3.13"

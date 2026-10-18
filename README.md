@@ -1,6 +1,6 @@
 # vex-platform
 
-Shared jobs, API and audit building blocks for [twitch-archive](https://github.com/vEXOULZ/twitch-archive)
+Shared jobs, API and audit building blocks for [twitch-archive](https://github.com/vexouLuna/twitch-archive)
 and doomtp-bot, and the conventions both follow ([docs/conventions.md](docs/conventions.md)).
 
 | Module | What it gives an application |
@@ -16,7 +16,7 @@ and doomtp-bot, and the conventions both follow ([docs/conventions.md](docs/conv
 
 ```toml
 # pyproject.toml of the application
-dependencies = ["vex-platform @ git+https://github.com/vEXOULZ/vex-platform@v0.1.0"]
+dependencies = ["vex-platform @ git+https://github.com/vexouLuna/vex-platform@v0.8.0"]
 ```
 
 Python 3.13+, Postgres 13+.

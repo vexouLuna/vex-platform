@@ -40,6 +40,15 @@ class StepDeferred(StepError):
         self.until = until
 
 
+class SkipTo(Exception):  # noqa: N818 - an outcome, not an error
+    """The rest of the run has nothing to do: it goes on at the later ``step`` (skipping the ones
+    between), or succeeds now when ``step`` is None. ``message`` goes to the run's log."""
+
+    def __init__(self, message: str, step: str | None = None) -> None:
+        super().__init__(message)
+        self.step = step
+
+
 class RunStopped(Exception):
     """Raised by ``StepContext.check_stop()`` when the run was cancelled or the worker is shutting
     down. The step is not finished: a shutdown re-queues the run at this step, a cancel ends it."""

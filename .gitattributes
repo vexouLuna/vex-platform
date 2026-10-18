@@ -1,4 +1,4 @@
-# Synced from vEXOULZ/conventions: change it there, not here.
+# Synced from vexouLuna/conventions: change it there, not here.
 #
 # LF everywhere, in the repo and in every checkout: the hooks and scripts are POSIX sh, and a CRLF
 # checkout would break them. PowerShell scripts are the one exception and keep CRLF.

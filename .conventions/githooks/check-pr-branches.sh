@@ -11,7 +11,7 @@
 #                      - into dev:   any Conventional Branch, or main itself (bringing a hotfix back)
 #                      - elsewhere:  any Conventional Branch (a PR stacked on another one)
 #
-# Synced from vEXOULZ/conventions: change it there, not here.
+# Synced from vexouLuna/conventions: change it there, not here.
 set -eu
 
 head=${1:-}

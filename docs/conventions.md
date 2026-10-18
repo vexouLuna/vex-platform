@@ -104,7 +104,7 @@ There is one table shape, `audit_log`, created by `migrations.audit_sql(1, table
 ### States
 
 ```
-queued ──▶ running ──▶ succeeded
+queued ──▶ running ──▶ succeeded ──(retry)──▶ queued
   ▲  │        │  │
   │  ▼        │  └──▶ failed ──(retry)──▶ queued
 paused ◀──────┘
@@ -112,8 +112,11 @@ paused ◀──────┘
   └──(cancel from queued/paused/running)──▶ cancelled ──(retry)──▶ queued
 ```
 
+- **Retry** (`retry(run_id, step=, at=, pause_before=)`, `POST /jobs/{id}/retry`) queues any finished run again with fresh attempts: a failed or cancelled one at `step` or where it stopped, a succeeded one at `step` or its first step. `at` starts it at that time instead of now (a "retry in"). `pause_before` replaces the run's gates (null: the kind's), so a retry can stop before steps it ran straight through last time; a gate passed for the step it starts at pauses it at once. A kind's own gate on that step does not: a retry means go.
+
 - `queued`, `running` and `paused` are **active**; `succeeded`, `failed` and `cancelled` are **finished**.
 - A run pauses before a step listed in its own `pause_before`, or, when that is NULL, in its kind's. `Registry.set_pause_before(kind, steps)` changes a kind's list while runs are going (an admin setting, for example). Gates are checked when a run moves on to a step, so the change applies from each run's next step boundary.
+- **Scheduled runs:** a run queued with a `not_before` later than the next `reconcile()` (`enqueue(not_before=)`, `retry(at=)`, a step's `ctx.enqueue(not_before=)`) waits with no procrastinate job, so it holds no lock, and the reconcile before its time defers its job. It starts up to `reconcile_interval` late if no worker process is running then.
 - A run in `running` goes back to `queued` when the process stops (shutdown, crash, or a stalled worker). The next start resumes it at its checkpoint; `reconcile()` does this at startup and every `reconcile_interval` seconds.
 - A procrastinate job left `doing` by a dead worker (no worker row, or no heartbeat for 30 seconds) is **stalled**, and it would hold its lock back from later runs for good. `reconcile()` ends it and queues a fresh job, whether its run was `running` or still `queued`, and also ends stalled `vex.run` jobs whose run has moved on to another job. `pause` and `cancel` end a stalled job too; a live worker's job is left to end by itself.
 
@@ -135,6 +138,7 @@ async def download(ctx: StepContext) -> None:
 - **Errors:**
   - Raise `StepRefused` for a failure that another attempt won't fix; the run fails at once.
   - Raise `StepDeferred(message, until)` when the step can't run before a known time, such as a daily quota resetting. The run is queued again at the same step with `not_before = until` and its attempts back at 0, and `last_error` holds the message. A run may be deferred any number of times, so a step that should give up keeps its own count in `ctx.payload` and raises `StepRefused` past it. Like a retry backoff, a deferred run keeps its lock while it waits.
+  - Raise `SkipTo(message, step=None)` when the rest of the run has nothing to do, such as a VOD with nothing left to upload. The run goes on at the later `step`, skipping the ones between, or succeeds now when `step` is None. It is not an error: `last_error` stays empty and the message goes to the run's log. A step that is not later in the kind fails the run.
   - Any other exception is retried after a backoff of `retry_base_seconds · 2^(attempt-1)`, up to `max_attempts` attempts. The retry resumes at the failed step.
 - **Custom context:** `context_factory` lets an application wrap `StepContext` in its own context class, such as twitch-archive's `JobContext`.
 
@@ -151,7 +155,7 @@ async def download(ctx: StepContext) -> None:
 - **`active_key`:** at most one queued, running or paused run per `(kind, active_key)`.
 - **On a duplicate**, `enqueue` either returns the existing run, merges the new payload into it (`on_duplicate="merge"`, audited as `job.merge`), or raises `JobConflict`.
 - **`lock`:** `JobKind.lock(run)` returns a string, and runs with the same lock never run at the same time (procrastinate's `lock`).
-  - A queued run holds its lock **even while it waits out a retry backoff**, so later runs with the same lock wait behind it. Keep lock keys narrow, for example the subject rather than the kind.
+  - A queued run holds its lock **even while it waits out a retry backoff** (a scheduled run does not, see "Scheduled runs"), so later runs with the same lock wait behind it. Keep lock keys narrow, for example the subject rather than the kind.
 
 ### Runs that queue runs
 

@@ -1,8 +1,8 @@
-# Shared rules for every vEXOULZ repo
+# Shared rules for every vexouLuna repo
 
-Synced from [vEXOULZ/conventions](https://github.com/vEXOULZ/conventions). Each repo's own `CLAUDE.md`
+Synced from [vexouLuna/conventions](https://github.com/vexouLuna/conventions). Each repo's own `CLAUDE.md`
 imports this file on its first line and adds only what is specific to that repo. To change a rule here,
-change it in vEXOULZ/conventions, release it, and bump the pin. Never edit the copy in `.conventions/`.
+change it in vexouLuna/conventions, release it, and bump the pin. Never edit the copy in `.conventions/`.
 
 ## Before you start
 
@@ -57,7 +57,7 @@ change it in vEXOULZ/conventions, release it, and bump the pin. Never edit the c
   - One multi-stage `Dockerfile` at the repo root. A repo with several services builds them as
     `--target`s.
   - The image runs as a non-root user and carries its own `HEALTHCHECK`.
-  - Images are `ghcr.io/vexoulz/<repo>`, plus `-<service>` when a repo has several.
+  - Images are `ghcr.io/vexouluna/<repo>`, plus `-<service>` when a repo has several.
 - **Compose files:**
   - `compose.yaml` is production-capable and pulls the published image.
   - `compose.dev.yaml` is for local development.
@@ -65,7 +65,7 @@ change it in vEXOULZ/conventions, release it, and bump the pin. Never edit the c
 - **Health endpoints:** every service serves `/healthz` (alive) and `/readyz` (ready to take traffic,
   dependencies included).
 - **Workflows:** `.github/workflows/ci.yml` runs the checks and `publish.yml` publishes. Both call the
-  reusable workflows in vEXOULZ/conventions, pinned to the same version as `.conventions.toml`.
+  reusable workflows in vexouLuna/conventions, pinned to the same version as `.conventions.toml`.
 
 ## Web repos (profiles `site` and `node-lib`)
 

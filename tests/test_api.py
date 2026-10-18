@@ -296,8 +296,14 @@ async def test_jobs_routes(make_runtime):
         r = await c.post("/api/v2/jobs", json={"kind": "nope"}, headers=vex)
         assert (r.status_code, r.json()["code"]) == (422, "invalid_job")
 
+        # A succeeded run, again later from its first step, with no gates.
+        at = "2099-01-01T00:00:00Z"
+        r = await c.post(f"/api/v2/jobs/{job['id']}/retry", json={"at": at, "pause_before": []}, headers=vex)
+        assert (r.json()["state"], r.json()["step"], r.json()["not_before"]) == ("queued", "one", at)
+        assert r.json()["pause_before"] == []
+
     actions = [r["action"] for r in await audit_rows("job.")]
-    assert actions == ["job.enqueue", "job.update", "job.resume", "job.cancel", "job.retry"]
+    assert actions == ["job.enqueue", "job.update", "job.resume", "job.cancel", "job.retry", "job.retry"]
 
 
 @pytest.mark.usefixtures("dsn")

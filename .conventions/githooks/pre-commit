@@ -8,7 +8,7 @@
 #
 # `git commit --no-verify` skips this, which is the escape hatch for the day you need it.
 #
-# Synced from vEXOULZ/conventions: change it there, not here.
+# Synced from vexouLuna/conventions: change it there, not here.
 set -eu
 
 top=$(git rev-parse --show-toplevel)

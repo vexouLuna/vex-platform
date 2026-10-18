@@ -5,7 +5,7 @@
     POST   /jobs                      queue a run
     GET    /jobs/{id}
     PATCH  /jobs/{id}                 pause_before, pause_next
-    POST   /jobs/{id}/pause|resume|retry|cancel
+    POST   /jobs/{id}/pause|resume|retry|cancel   retry: step, at, pause_before
     GET    /jobs/{id}/events          ?cursor= (tail: pass back next_cursor, it is never null)
     GET    /jobs/{id}/related         the tree of runs it is in (who queued whom)
     GET    /job-kinds
@@ -109,7 +109,11 @@ class ResumeIn(ApiModel):
 
 
 class RetryIn(ApiModel):
-    step: str | None = None
+    step: str | None = Field(default=None, description="Where to start; default: where it stopped, or the first step")
+    at: UtcDatetime | None = Field(default=None, description="Start then instead of now")
+    pause_before: list[str] | None = Field(
+        default=None, description="Its gates; null: the kind's; absent: as they were"
+    )
 
 
 def default_actor(request: Request) -> Actor:
@@ -241,7 +245,9 @@ def jobs_router(
 
     @router.post("/jobs/{run_id}/retry", response_model=JobOut)
     async def retry_job(run_id: int, request: Request, body: RetryIn | None = None) -> JobOut:
-        return out(await call(runtime.retry, run_id, step=body.step if body else None, **who(request)))
+        body = body or RetryIn()
+        gates = {"pause_before": body.pause_before} if "pause_before" in body.model_fields_set else {}
+        return out(await call(runtime.retry, run_id, step=body.step, at=body.at, **gates, **who(request)))
 
     @router.post("/jobs/{run_id}/cancel", response_model=JobOut)
     async def cancel_job(run_id: int, request: Request) -> JobOut:

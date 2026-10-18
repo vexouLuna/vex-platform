@@ -9,7 +9,7 @@
 # description is lowercase words joined by single hyphens. A ticket number is just another word:
 # `bugfix/issue-42-cooldown-off-by-one`.
 #
-# Synced from vEXOULZ/conventions: change it there, not here.
+# Synced from vexouLuna/conventions: change it there, not here.
 set -eu
 
 branch=${1:-}

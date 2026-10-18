@@ -2,7 +2,7 @@
 (docs/conventions.md, "Jobs")."""
 
 from .context import StepContext
-from .errors import InvalidJob, JobConflict, JobNotFound, RunStopped, StepDeferred, StepError, StepRefused
+from .errors import InvalidJob, JobConflict, JobNotFound, RunStopped, SkipTo, StepDeferred, StepError, StepRefused
 from .registry import JobKind, Registry
 from .run import ACTIVE, FINISHED, STATES, JobRun
 from .runtime import Enqueued, JobRuntime
@@ -22,6 +22,7 @@ __all__ = [
     "RunStopped",
     "StepContext",
     "StepError",
+    "SkipTo",
     "StepDeferred",
     "StepRefused",
 ]

@@ -16,7 +16,7 @@ and doomtp-bot, and the conventions both follow ([docs/conventions.md](docs/conv
 
 ```toml
 # pyproject.toml of the application
-dependencies = ["vex-platform @ git+https://github.com/vexouLuna/vex-platform@v0.7.0"]
+dependencies = ["vex-platform @ git+https://github.com/vexouLuna/vex-platform@v0.8.0"]
 ```
 
 Python 3.13+, Postgres 13+.

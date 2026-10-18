@@ -36,10 +36,10 @@ from ..actor import SYSTEM, Actor
 from ..audit import psycopg as audit_pg
 from ..audit.model import AuditEntry
 from .context import StepContext
-from .errors import InvalidJob, JobConflict, JobNotFound, RunStopped, StepDeferred, StepError, StepRefused
+from .errors import InvalidJob, JobConflict, JobNotFound, RunStopped, SkipTo, StepDeferred, StepError, StepRefused
 from .events import RunEvents
 from .registry import JobKind, Registry
-from .run import ACTIVE, SELECT, STATES, JobRun
+from .run import ACTIVE, FINISHED, SELECT, STATES, JobRun
 
 log = structlog.get_logger(__name__)
 
@@ -292,8 +292,19 @@ class JobRuntime:
             raise JobNotFound(run_id)
         return JobRun.from_row(row)
 
-    async def _defer(self, conn: AsyncConnection[Any], run: JobRun) -> JobRun:
-        """Queue a procrastinate job for ``run`` on ``conn`` (so it commits with the run's change)."""
+    def _scheduled(self, run: JobRun) -> bool:
+        """Whether ``run`` starts later than the next ``reconcile()``: it waits with no procrastinate
+        job, so it holds no lock (a todo job would hold back every later run with the same lock)."""
+        return run.not_before is not None and run.not_before > _now() + dt.timedelta(seconds=self.reconcile_interval)
+
+    async def _defer(self, conn: AsyncConnection[Any], run: JobRun, *, hold: bool = False) -> JobRun:
+        """Queue a procrastinate job for ``run`` on ``conn`` (so it commits with the run's change).
+        A run scheduled past the next reconcile gets its job from that reconcile instead, unless it
+        ``hold``s its lock while it waits (a retry backoff, a ``StepDeferred``)."""
+        if not hold and self._scheduled(run):
+            return (
+                run if run.procrastinate_job_id is None else await self._update(conn, run.id, procrastinate_job_id=None)
+            )
         kind = self.registry.get(run.kind)
         options: dict[str, Any] = {"queue": kind.queue, "priority": kind.priority, "connection": conn}
         lock = kind.lock(run) if kind.lock else None
@@ -724,44 +735,60 @@ class JobRuntime:
         run_id: int,
         *,
         step: str | None = None,
+        at: dt.datetime | None = None,
+        pause_before: Sequence[str] | None | Literal["keep"] = "keep",
         actor: Actor = SYSTEM,
         request_id: str | None = None,
         conn: AsyncConnection[Any] | None = None,
     ) -> JobRun:
-        """Queue a failed or cancelled run again, at ``step`` or where it stopped, with fresh attempts."""
+        """Queue a finished run again with fresh attempts: a failed or cancelled one at ``step`` or where
+        it stopped, a succeeded one at ``step`` or its first. ``at`` (timezone-aware) schedules it for
+        later; ``pause_before`` replaces its gates (None: back to the kind's) so it can stop before an
+        earlier step this time; one on the step it starts at pauses it at once."""
+        if at is not None and at.tzinfo is None:
+            raise InvalidJob("retry needs a timezone-aware 'at'")
         async with self.transaction(conn) as c:
             run = await self._lock_run(c, run_id)
-            if run.state not in ("failed", "cancelled"):
-                raise JobConflict(f"run {run_id} is {run.state}; only failed or cancelled runs can be retried")
+            if run.state not in FINISHED:
+                raise JobConflict(f"run {run_id} is {run.state}; only finished runs can be retried")
             kind = self.registry.get(run.kind)
             if step is not None:
                 self.registry.check_steps(run.kind, [step])
+            first = step or (run.step if run.state != "succeeded" else None) or kind.steps[0]
+            values: dict[str, Any] = {}
+            if pause_before != "keep":
+                if pause_before is not None:
+                    self.registry.check_steps(run.kind, pause_before)
+                    pause_before = list(pause_before)
+                values["pause_before"] = pause_before
+            # Only a gate passed now holds it at the step it starts at: retrying is a "go".
+            hold = first in (values.get("pause_before") or ())
             try:
                 async with c.transaction():
                     new = await self._update(
                         c,
                         run_id,
-                        state="queued",
-                        step=step or run.step or kind.steps[0],
+                        state="paused" if hold else "queued",
+                        step=first,
                         attempts=0,
                         last_error=None,
-                        not_before=None,
+                        not_before=at,
                         cancel_requested=False,
                         pause_next=False,
                         finished_at=None,
+                        procrastinate_job_id=None,
+                        **values,
                     )
             except errors.UniqueViolation:
                 raise JobConflict(f"another run of {run.kind!r} with the same key is already active") from None
-            new = await self._defer(c, new)
-            await self._audit(
-                c,
-                "job.retry",
-                new,
-                actor,
-                request_id,
-                before={"state": run.state},
-                after={"state": "queued", "step": new.step},
-            )
+            if new.state == "queued":
+                new = await self._defer(c, new)
+            after: dict[str, Any] = {"state": new.state, "step": new.step}
+            if at is not None:
+                after["not_before"] = at.isoformat()
+            if values:
+                after["pause_before"] = values["pause_before"]
+            await self._audit(c, "job.retry", new, actor, request_id, before={"state": run.state}, after=after)
         return new
 
     async def cancel(
@@ -862,6 +889,8 @@ class JobRuntime:
                     log.warning("jobs.stalled_job_ended", run_id=run.id, job_id=run.procrastinate_job_id)
                 elif status == "todo" and run.state == "queued":
                     continue
+                elif status is None and run.state == "queued" and self._scheduled(run):
+                    continue  # its time is past the next reconcile
                 if run.state == "running":
                     run = await self._update(c, run.id, state="queued")
                     log.warning("jobs.recovered", run_id=run.id, kind=run.kind, step=run.step)
@@ -959,11 +988,17 @@ class JobRuntime:
         ctx.log.info("running %s from step %s (attempt %d)", kind.name, current, ctx.attempt)
         self._hook("started", run)
         try:
-            for i in range(start, len(steps)):
+            i = start
+            while i < len(steps):
                 ctx.step = steps[i]
                 ctx.log.info("step %s", steps[i])
-                await self.registry.steps[steps[i]](arg)
-                current = steps[i + 1] if i + 1 < len(steps) else None
+                try:
+                    await self.registry.steps[steps[i]](arg)
+                    i += 1
+                except SkipTo as skip:
+                    i = self._skip_to(steps, i, skip)
+                    ctx.log.info("%s; %s", skip, f"skipping to step {skip.step}" if skip.step else "nothing left to do")
+                current = steps[i] if i < len(steps) else None
                 if current is None:
                     break
                 outcome = await self._advance(ctx, current)
@@ -996,6 +1031,15 @@ class JobRuntime:
                 raise
         except Exception as exc:
             await self._failed(ctx, kind, current, exc)
+
+    @staticmethod
+    def _skip_to(steps: Sequence[str], i: int, skip: SkipTo) -> int:
+        """The index ``skip`` moves the run to from step ``i``: its step, which must come later, or the end."""
+        if skip.step is None:
+            return len(steps)
+        if skip.step not in steps[i + 1 :]:
+            raise StepRefused(f"{steps[i]} skipped to {skip.step!r}, which is not a later step of this kind")
+        return steps.index(skip.step, i + 1)
 
     async def _advance(self, ctx: StepContext, step: str) -> Literal["go", "pause", "stop"]:
         """Checkpoint ``step`` as the next one; then stop (cancel requested), pause (a gate) or go."""
@@ -1062,7 +1106,7 @@ class JobRuntime:
                 run = await self._update(
                     c, run.id, state="queued", not_before=max(exc.until, _now()), **{**common, "attempts": 0}
                 )
-                run = await self._defer(c, run)
+                run = await self._defer(c, run, hold=True)
                 ctx.log.warning("step %s deferred until %s: %s", current, exc.until.isoformat(), exc)
                 event = "deferred"
             elif isinstance(exc, StepRefused) or attempts >= max_attempts:
@@ -1074,7 +1118,7 @@ class JobRuntime:
                 run = await self._update(
                     c, run.id, state="queued", not_before=_now() + dt.timedelta(seconds=delay), **common
                 )
-                run = await self._defer(c, run)
+                run = await self._defer(c, run, hold=True)
                 ctx.log.warning("step %s failed (%s); retry %d in %gs", current, exc, attempts, delay)
                 event = "retrying"
         self._hook(event, run)

@@ -1,4 +1,4 @@
-# conventions:begin: synced from vEXOULZ/conventions; edit it there, then run `conventions sync`
+# conventions:begin: synced from vexouLuna/conventions; edit it there, then run `conventions sync`
 # Secrets and local settings. The templates (.env.example, secrets.example/) are the ones committed.
 .env
 .env.*

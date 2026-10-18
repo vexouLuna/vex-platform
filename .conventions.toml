@@ -1,6 +1,6 @@
-# Which version of vEXOULZ/conventions this repo follows, and how.
-# See https://github.com/vEXOULZ/conventions#conventionstoml
-version = "v2.1.0"
+# Which version of vexouLuna/conventions this repo follows, and how.
+# See https://github.com/vexouLuna/conventions#conventionstoml
+version = "v2.1.1"
 profile = "python-lib"
 flow = "trunk"
 # extra_checks = []      # required checks beyond the profile's, e.g. a repo-specific job

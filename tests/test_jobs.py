@@ -14,6 +14,7 @@ from vex_platform.jobs import (
     JobConflict,
     Registry,
     RunStopped,
+    SkipTo,
     StepContext,
     StepDeferred,
     StepError,
@@ -626,3 +627,79 @@ async def test_step_enqueue_links_children_to_their_parent(make_runtime):
     assert manual.parent_id == root.id
     rows = [r for r in await audit_rows("job.enqueue") if r["after"].get("parent_id") == root.id]
     assert len(rows) == 3
+
+
+async def test_scheduled_run_waits_without_holding_its_lock(make_runtime):
+    calls: list[str] = []
+    runtime = await make_runtime(locked(calls))
+    later = dt.datetime.now(dt.UTC) + dt.timedelta(days=3)
+    scheduled = (await runtime.enqueue("abc", subject="vod:1", not_before=later)).run
+    assert scheduled.state == "queued" and scheduled.procrastinate_job_id is None
+    now = (await runtime.enqueue("abc", subject="vod:1")).run
+    await wait_for(runtime, now.id, ["succeeded"])  # not held back by the run three days out
+    assert await runtime.reconcile() == 0
+    assert (await runtime.get(scheduled.id)).procrastinate_job_id is None
+
+    await jobs_sql("UPDATE job_runs SET not_before = now() WHERE id = %s", (scheduled.id,))
+    assert await runtime.reconcile() == 1  # its time came: it gets its job and lock
+    await wait_for(runtime, scheduled.id, ["succeeded"])
+    assert calls == ["a", "b", "c"] * 2
+
+
+async def test_retry_a_succeeded_run_later_from_a_step_with_new_gates(make_runtime):
+    calls: list[str] = []
+    runtime = await make_runtime(three_steps(calls))
+    run = await wait_for(runtime, (await runtime.enqueue("abc")).run.id, ["succeeded"])
+
+    at = dt.datetime.now(dt.UTC) + dt.timedelta(hours=2)
+    again = await runtime.retry(run.id, step="b", at=at, actor=VEX)
+    assert (again.state, again.step, again.not_before, again.procrastinate_job_id) == ("queued", "b", at, None)
+    [row] = await audit_rows("job.retry")
+    assert row["before"] == {"state": "succeeded"} and row["after"]["not_before"] == at.isoformat()
+    await jobs_sql("UPDATE job_runs SET not_before = now() WHERE id = %s", (run.id,))
+    await runtime.reconcile()
+    await wait_for(runtime, run.id, ["succeeded"])
+    assert calls == ["a", "b", "c", "b", "c"]
+
+    # From the first step, stopping before b this time; then back to the kind's gates.
+    gated = await runtime.retry(run.id, pause_before=["b"])
+    gated = await wait_for(runtime, gated.id, ["paused"])
+    assert (gated.step, gated.pause_before) == ("b", ["b"])
+    await runtime.cancel(run.id)
+    assert (await runtime.retry(run.id, step="a", pause_before=["a"])).state == "paused"  # gated where it starts
+    await runtime.cancel(run.id)
+    assert (await runtime.retry(run.id, pause_before=None)).pause_before is None
+    with pytest.raises(JobConflict):
+        await runtime.retry(run.id)  # still active
+    with pytest.raises(InvalidJob):
+        await runtime.retry(run.id, at=dt.datetime(2030, 1, 1))
+
+
+async def test_skip_to_a_later_step_or_the_end(make_runtime):
+    registry = Registry()
+    calls: list[str] = []
+
+    @registry.step()
+    async def split(ctx):
+        calls.append("split")
+        if ctx.payload.get("to") != "split":
+            raise SkipTo("nothing to upload", ctx.payload.get("to"))
+
+    for name in ("upload", "cleanup"):
+
+        async def step(ctx: StepContext, name: str = name) -> None:
+            calls.append(name)
+
+        registry.add_step(name, step)
+    registry.kind("vod", ["split", "upload", "cleanup"], retry_base_seconds=0)
+    runtime = await make_runtime(registry)
+
+    run = await wait_for(runtime, (await runtime.enqueue("vod", payload={"to": "cleanup"})).run.id, ["succeeded"])
+    assert calls == ["split", "cleanup"] and run.attempts == 0
+    calls.clear()
+    run = await wait_for(runtime, (await runtime.enqueue("vod", payload={"to": None})).run.id, ["succeeded"])
+    assert calls == ["split"] and run.last_error is None
+    assert "nothing to upload; nothing left to do" in [e["message"] for e in await runtime.events.list(run.id)]
+    run = await wait_for(runtime, (await runtime.enqueue("vod", payload={"to": "split"})).run.id, ["succeeded"])
+    bad = await wait_for(runtime, (await runtime.enqueue("vod", payload={"to": "nope"})).run.id, ["failed"])
+    assert "not a later step" in (bad.last_error or "") and bad.attempts == 1

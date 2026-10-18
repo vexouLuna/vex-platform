@@ -9,7 +9,7 @@ dependencies = [
     # Exact pin: the jobs schema SQL in vex_platform/migrations is a frozen copy of this
     # version's. Bumping it means shipping procrastinate's migrations as a new revision there.
     "procrastinate==3.10.0",
-    "psycopg[binary,pool]>=3.2",
+    "psycopg[binary,pool]>=3.3.6",
     "fastapi>=0.115",
     "pydantic>=2.7",
     "structlog>=26.1.0",

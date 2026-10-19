@@ -10,23 +10,23 @@ dependencies = [
     # version's. Bumping it means shipping procrastinate's migrations as a new revision there.
     "procrastinate==3.10.0",
     "psycopg[binary,pool]>=3.3.6",
-    "fastapi>=0.115",
-    "pydantic>=2.7",
+    "fastapi>=0.143.3",
+    "pydantic>=2.14.1",
     "structlog>=26.1.0",
 ]
 
 [project.optional-dependencies]
-sqlalchemy = ["sqlalchemy[asyncio]>=2.0"]
+sqlalchemy = ["sqlalchemy[asyncio]>=2.1.5"]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "pytest-asyncio>=0.24",
+    "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
-    "sqlalchemy[asyncio]>=2.0",
+    "sqlalchemy[asyncio]>=2.1.5",
     "asyncpg>=0.29",
     "ruff>=0.17.1",
-    "mypy>=1.11",
+    "mypy>=2.4.0",
 ]
 
 [build-system]

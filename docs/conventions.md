@@ -98,7 +98,7 @@ There is one table shape, `audit_log`, created by `migrations.audit_sql(1, table
 ### Tables
 
 - Everything lives in its own Postgres schema, `jobs` by default.
-- **Authoritative record:** `job_runs`, together with its log `job_run_events`. Both are created by `migrations.jobs_sql(1, schema=...)`, alongside procrastinate's own tables; `jobs_sql(2)` adds `job_runs.scope` and `jobs_sql(3)` adds `job_runs.parent_id`.
+- **Authoritative record:** `job_runs`, together with its log `job_run_events`. Both are created by `migrations.jobs_sql(1, schema=...)`, alongside procrastinate's own tables; `jobs_sql(2)` adds `job_runs.scope`, `jobs_sql(3)` adds `job_runs.parent_id` and `jobs_sql(4)` allows the `debug` event level.
 - **Procrastinate's side:** each queued run has one procrastinate job (`vex.run`, holding `run_id`). That job is transport only, and it is deleted once it finishes.
 
 ### States
@@ -126,6 +126,7 @@ paused ◀──────┘
 @registry.step("download")
 async def download(ctx: StepContext) -> None:
     ctx.log.info("fetching %s", ctx.subject)
+    ctx.log.debug("chapters found: %s", names)  # hidden in the job view unless asked for
     ctx.payload["parts"] = 12
     await ctx.save()  # checkpoint payload mid-step
     ctx.progress(3, 12, "parts")
@@ -134,6 +135,10 @@ async def download(ctx: StepContext) -> None:
     await ctx.audit("vod.update", target="vod:1", before=..., after=...)
 ```
 
+- **Log:** `ctx.log.debug/info/warning/error`, %-style. Use `debug` for detail a reader wants only while looking into a run: what a check found, what was skipped and why. Lines are buffered and written about once a second, so logging never waits on the database.
+  - A run keeps its newest 20,000 log lines (`RunEvents.cap`); older ones are pruned.
+  - A progress report (`ctx.progress`) is kept apart: only the newest one per run and step is stored, so a step may report as often as it likes without pushing log lines out.
+  - `GET /jobs/{id}/events` reads them: `?cursor=` for those after a cursor (tailing), `?tail=true` for the newest page, `?before=` with a page's `prev_cursor` for the page before it (null when there is none), and `?min_level=` to leave out lower levels.
 - **State:** `ctx.payload` is the run's state across steps and attempts. It is saved after each step, or on demand with `ctx.save()`.
 - **Errors:**
   - Raise `StepRefused` for a failure that another attempt won't fix; the run fails at once.

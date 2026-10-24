@@ -34,6 +34,7 @@ def dsn() -> str:
         conn.execute(migrations.jobs_sql(1, schema="jobs"))
         conn.execute(migrations.jobs_sql(2, schema="jobs"))
         conn.execute(migrations.jobs_sql(3, schema="jobs"))
+        conn.execute(migrations.jobs_sql(4, schema="jobs"))
         conn.execute(migrations.audit_sql(1, table=AUDIT))
     return DSN
 

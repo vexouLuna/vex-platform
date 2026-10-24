@@ -27,6 +27,7 @@ from ..api.middleware import request_id
 from ..api.models import ApiModel, UtcDatetime
 from ..api.pagination import MAX_LIMIT, Page, decode_cursor, encode_cursor, page_of
 from .errors import InvalidJob, JobConflict, JobNotFound
+from .events import Level
 from .run import STATES, JobRun
 from .runtime import JobRuntime, kinds_info
 
@@ -74,6 +75,11 @@ class EventOut(ApiModel):
     step: str | None
     message: str
     progress: dict[str, Any] | None
+
+
+class EventPage(Page[EventOut]):
+    # With ``before`` or ``tail``: pass it back as ``before`` for the page of older events; null when there are none.
+    prev_cursor: str | None = None
 
 
 class JobKindOut(ApiModel):
@@ -253,19 +259,34 @@ def jobs_router(
     async def cancel_job(run_id: int, request: Request) -> JobOut:
         return out(await call(runtime.cancel, run_id, **who(request)))
 
-    @router.get("/jobs/{run_id}/events", response_model=Page[EventOut])
+    @router.get("/jobs/{run_id}/events", response_model=EventPage)
     async def job_events(
         run_id: int,
         cursor: str | None = None,
+        before: Annotated[str | None, Query(description="A prev_cursor: the page of events just before it")] = None,
+        tail: Annotated[bool, Query(description="The run's newest events (then tail with next_cursor)")] = False,
+        min_level: Annotated[Level, Query(description="Leave out events below this level")] = "debug",
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 200,
-    ) -> Page[Any]:
+    ) -> EventPage:
         await call(runtime.get, run_id)
+        if before is not None or tail:
+            key = decode_cursor(before, size=1)
+            rows = await runtime.events.list(
+                run_id, before=int(key[0]) if key else None, newest=True, min_level=min_level, limit=limit + 1
+            )
+            older = len(rows) > limit
+            items = [EventOut(**r) for r in (rows[1:] if older else rows)]
+            return EventPage(
+                items=items,
+                next_cursor=encode_cursor([items[-1].id if items else 0]),
+                prev_cursor=encode_cursor([items[0].id]) if older else None,
+            )
         key = decode_cursor(cursor, size=1)
         after = int(key[0]) if key else 0
-        rows = await runtime.events.list(run_id, after=after, limit=limit)
+        rows = await runtime.events.list(run_id, after=after, min_level=min_level, limit=limit)
         items = [EventOut(**r) for r in rows]
         # Never null: a client tails the log by passing the last cursor back.
-        return Page(items=items, next_cursor=encode_cursor([items[-1].id if items else after]))
+        return EventPage(items=items, next_cursor=encode_cursor([items[-1].id if items else after]))
 
     @router.get("/jobs/{run_id}/related", response_model=RelatedOut)
     async def related_jobs(run_id: int, limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 200) -> RelatedOut:

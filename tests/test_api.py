@@ -269,6 +269,13 @@ async def test_jobs_routes(make_runtime):
         assert any(e["progress"] == {"done": 50, "total": 100, "unit": "percent"} for e in events["items"])
         r = await c.get(f"/api/v2/jobs/{job['id']}/events", params={"cursor": events["next_cursor"]}, headers=vex)
         assert r.json()["items"] == [] and r.json()["next_cursor"] == events["next_cursor"]
+        r = await c.get(f"/api/v2/jobs/{job['id']}/events", params={"tail": True, "limit": 1}, headers=vex)
+        tail = r.json()
+        assert tail["items"] == events["items"][-1:] and tail["prev_cursor"]
+        r = await c.get(f"/api/v2/jobs/{job['id']}/events", params={"before": tail["prev_cursor"]}, headers=vex)
+        assert r.json()["items"] == events["items"][:-1] and r.json()["prev_cursor"] is None
+        r = await c.get(f"/api/v2/jobs/{job['id']}/events", params={"min_level": "error"}, headers=vex)
+        assert r.json()["items"] == []
 
         r = await c.patch(f"/api/v2/jobs/{job['id']}", json={"pause_before": None}, headers=vex)
         assert r.json()["pause_before"] is None

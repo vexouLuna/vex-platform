@@ -3,4 +3,4 @@
 See docs/conventions.md for the vocabulary every module here uses.
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"

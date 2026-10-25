@@ -7,9 +7,10 @@ on:
 
 jobs:
   conventions:
-    uses: vexouLuna/conventions/.github/workflows/conventions-check.yml@v2.1.1
-    secrets: inherit
+    uses: vexouLuna/conventions/.github/workflows/conventions-check.yml@v3.0.0
+    secrets:
+      CONVENTIONS_PRIVATE_PATTERNS: ${{ secrets.CONVENTIONS_PRIVATE_PATTERNS }}
   ci:
-    uses: vexouLuna/conventions/.github/workflows/python-ci.yml@v2.1.1
+    uses: vexouLuna/conventions/.github/workflows/python-ci.yml@v3.0.0
     with:
       postgres: true

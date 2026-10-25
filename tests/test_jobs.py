@@ -703,3 +703,74 @@ async def test_skip_to_a_later_step_or_the_end(make_runtime):
     run = await wait_for(runtime, (await runtime.enqueue("vod", payload={"to": "split"})).run.id, ["succeeded"])
     bad = await wait_for(runtime, (await runtime.enqueue("vod", payload={"to": "nope"})).run.id, ["failed"])
     assert "not a later step" in (bad.last_error or "") and bad.attempts == 1
+
+
+async def test_event_levels_progress_and_pages(make_runtime):
+    registry = Registry()
+
+    @registry.step()
+    async def chatty(ctx: StepContext) -> None:
+        ctx.log.debug("found chapter %s", "Intro")
+        for i in range(5):
+            ctx.log.info("line %d", i)
+            ctx.progress(i + 1, 5, "parts")
+        await ctx.runtime.events.flush()
+        ctx.progress(6, 6, "parts")
+
+    registry.kind("chatty", ["chatty"])
+    runtime = await make_runtime(registry)
+    runtime.events.cap = 3
+    run = await wait_for(runtime, (await runtime.enqueue("chatty")).run.id, ["succeeded"])
+    events = await runtime.events.list(run.id)
+    # Progress keeps only its newest report and doesn't count toward the cap of log lines.
+    assert [e["progress"] for e in events if e["progress"]] == [{"done": 6, "total": 6, "unit": "parts"}]
+    assert "found chapter Intro" in [e["message"] for e in events if e["level"] == "debug"]
+    assert not any(e["level"] == "debug" for e in await runtime.events.list(run.id, min_level="info"))
+
+    ids = [e["id"] for e in events]
+    assert [e["id"] for e in await runtime.events.list(run.id, newest=True, limit=2)] == ids[-2:]
+    assert [e["id"] for e in await runtime.events.list(run.id, before=ids[-2], limit=2)] == ids[-4:-2]
+
+
+async def test_capped_log_keeps_newest_lines(make_runtime):
+    registry = Registry()
+
+    @registry.step()
+    async def loud(ctx: StepContext) -> None:
+        for i in range(250):
+            ctx.log.info("line %d", i)
+            ctx.progress(i, 250, "items")
+
+    registry.kind("loud", ["loud"])
+    runtime = await make_runtime(registry)
+    runtime.events.cap = 50
+    run = await wait_for(runtime, (await runtime.enqueue("loud")).run.id, ["succeeded"])
+    lines = [e["message"] for e in await runtime.events.list(run.id, limit=500) if not e["progress"]]
+    assert "line 249" in lines and "line 0" not in lines and len(lines) < 150
+
+
+async def test_debug_lines_dropped_before_revision_4(make_runtime):
+    """An app that hasn't applied jobs_sql(4) loses only its debug lines, not the batch around them."""
+    registry = Registry()
+
+    @registry.step()
+    async def mixed(ctx: StepContext) -> None:
+        ctx.log.debug("detail")
+        ctx.log.info("kept")
+
+    registry.kind("mixed", ["mixed"])
+    runtime = await make_runtime(registry)
+    old = "CHECK (level IN ('info', 'warning', 'error'))"
+    await jobs_sql(
+        "ALTER TABLE job_run_events DROP CONSTRAINT job_run_events_level_check,"
+        f" ADD CONSTRAINT job_run_events_level_check {old}"
+    )
+    try:
+        run = await wait_for(runtime, (await runtime.enqueue("mixed")).run.id, ["succeeded"])
+        messages = [e["message"] for e in await runtime.events.list(run.id)]
+        assert "kept" in messages and "detail" not in messages and not runtime.events.debug_ok
+    finally:
+        await jobs_sql(
+            "ALTER TABLE job_run_events DROP CONSTRAINT job_run_events_level_check, ADD CONSTRAINT"
+            " job_run_events_level_check CHECK (level IN ('debug', 'info', 'warning', 'error'))"
+        )

@@ -34,8 +34,15 @@ class RunLog:
         text = msg % args if args else msg
         ctx = self._ctx
         ctx.runtime.events.add(ctx.run_id, level, ctx.step, text, progress)
-        method = {"info": _logger.info, "warning": _logger.warning, "error": _logger.error}[level]
+        method = {"debug": _logger.debug, "info": _logger.info, "warning": _logger.warning, "error": _logger.error}[
+            level
+        ]
         method("jobs.log", message=text, run_id=ctx.run_id, kind=ctx.kind.name, step=ctx.step, **fields)
+
+    def debug(self, msg: str, *args: Any) -> None:
+        """Detail a reader may want while looking into a run (what a check found, what was skipped and why);
+        the job view hides it unless asked."""
+        self._emit("debug", msg, args)
 
     def info(self, msg: str, *args: Any) -> None:
         self._emit("info", msg, args)

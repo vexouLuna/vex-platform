@@ -62,6 +62,7 @@ change it in vexouLuna/conventions, release it, and bump the pin. Never edit the
   - `compose.yaml` is production-capable and pulls the published image.
   - `compose.dev.yaml` is for local development.
   - No other compose file names.
+- **JSON APIs:** new routes follow `.conventions/API.md` (casing, timestamps, paging, errors, CSRF).
 - **Health endpoints:** every service serves `/healthz` (alive) and `/readyz` (ready to take traffic,
   dependencies included).
 - **Workflows:** `.github/workflows/ci.yml` runs the checks and `publish.yml` publishes. Both call the

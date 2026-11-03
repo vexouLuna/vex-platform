@@ -74,7 +74,7 @@ def audit_router(
         cursor: str | None = None,
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 50,
     ) -> Page[Any]:
-        key = decode_cursor(cursor, size=1)
+        key = decode_cursor(cursor, size=1, ints=True)
         caller = getattr(request.state, "actor", None)
         me = (caller.kind, caller.id) if isinstance(caller, Actor) and caller.id else None
         scopes = await visible_scopes(request) if visible_scopes else None

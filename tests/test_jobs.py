@@ -774,3 +774,15 @@ async def test_debug_lines_dropped_before_revision_4(make_runtime):
             "ALTER TABLE job_run_events DROP CONSTRAINT job_run_events_level_check, ADD CONSTRAINT"
             " job_run_events_level_check CHECK (level IN ('debug', 'info', 'warning', 'error'))"
         )
+
+
+async def test_requeue_gives_up_queued_key_held_by_another_queued_run(make_runtime):
+    runtime = await make_runtime(three_steps([]), start=False)
+    first = await runtime.enqueue("abc", queued_key="chan:1")
+    async with runtime.transaction() as c:
+        await runtime._update(c, first.run.id, state="running")
+    second = await runtime.enqueue("abc", queued_key="chan:1")
+    assert second.created
+    async with runtime.transaction() as c:  # a retry/defer/interrupt of the running run
+        back = await runtime._update(c, first.run.id, state="queued")
+    assert back.state == "queued" and back.queued_key is None

@@ -35,8 +35,8 @@ def encode_cursor(key: Cursor | None) -> str | None:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
-def decode_cursor(value: str | None, size: int | None = None) -> Cursor | None:
-    """``size``: how many key parts the cursor must have (a 400 otherwise)."""
+def decode_cursor(value: str | None, size: int | None = None, *, ints: bool = False) -> Cursor | None:
+    """``size``: how many key parts the cursor must have; ``ints``: they must all be integers (a 400 otherwise)."""
     if not value:
         return None
     try:
@@ -44,6 +44,8 @@ def decode_cursor(value: str | None, size: int | None = None) -> Cursor | None:
     except (binascii.Error, ValueError) as exc:
         raise ApiError(400, "bad_cursor", "The cursor is not one this API issued.") from exc
     if not isinstance(key, list) or (size is not None and len(key) != size):
+        raise ApiError(400, "bad_cursor", "The cursor is not one this API issued.")
+    if ints and not all(isinstance(k, int) and not isinstance(k, bool) for k in key):
         raise ApiError(400, "bad_cursor", "The cursor is not one this API issued.")
     return key
 

@@ -36,6 +36,7 @@ def dsn() -> str:
         conn.execute(migrations.jobs_sql(3, schema="jobs"))
         conn.execute(migrations.jobs_sql(4, schema="jobs"))
         conn.execute(migrations.jobs_sql(5, schema="jobs"))
+        conn.execute(migrations.jobs_sql(6, schema="jobs"))
         conn.execute(migrations.audit_sql(1, table=AUDIT))
     return DSN
 
@@ -46,7 +47,8 @@ def clean(request: pytest.FixtureRequest) -> None:
         return
     with psycopg.connect(DSN, autocommit=True) as conn:
         conn.execute(
-            "TRUNCATE jobs.job_runs, jobs.job_run_events, jobs.procrastinate_jobs, jobs.procrastinate_workers,"
+            "TRUNCATE jobs.job_schedules, jobs.job_runs, jobs.job_run_events, jobs.procrastinate_jobs,"
+            " jobs.procrastinate_workers,"
             " public.audit_log RESTART IDENTITY CASCADE"
         )
 

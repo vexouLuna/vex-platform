@@ -6,6 +6,7 @@ from .errors import InvalidJob, JobConflict, JobNotFound, RunStopped, SkipTo, St
 from .registry import JobKind, Registry
 from .run import ACTIVE, FINISHED, STATES, JobRun
 from .runtime import Enqueued, JobRuntime
+from .schedules import Schedule
 
 __all__ = [
     "ACTIVE",
@@ -20,6 +21,7 @@ __all__ = [
     "JobRuntime",
     "Registry",
     "RunStopped",
+    "Schedule",
     "StepContext",
     "StepError",
     "SkipTo",

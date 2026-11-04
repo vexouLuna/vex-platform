@@ -821,3 +821,97 @@ async def test_dismiss_only_finished_failures(make_runtime):
     with pytest.raises(JobConflict):
         await runtime.dismiss(run.id)  # queued
     assert (await runtime.dismiss((await runtime.cancel(run.id)).id)).dismissed_at is not None
+
+
+def _hourly(calls: list[str]) -> Registry:
+    registry = Registry()
+
+    @registry.step()
+    async def tick(ctx: StepContext) -> None:
+        calls.append("tick")
+
+    registry.kind("hourly", ["tick"], retry_base_seconds=0)
+    registry.kind("hidden", ["tick"])
+    return registry
+
+
+async def _due(schedule_id: int) -> None:
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(
+            "UPDATE jobs.job_schedules SET next_run_at = now() - interval '1 minute' WHERE id = %s", (schedule_id,)
+        )
+
+
+async def test_schedule_tick_enqueues_due_and_skips_paused(make_runtime):
+    calls: list[str] = []
+    runtime = await make_runtime(_hourly(calls), schedulable=["hourly"], start=False)
+    s = await runtime.create_schedule("hourly-tick", "hourly", "0 * * * *", actor=VEX)
+    assert s.next_run_at > dt.datetime.now(dt.UTC) and s.next_run_at.minute == 0
+    assert await runtime.run_schedules() == 0  # not due yet
+
+    await _due(s.id)
+    assert await runtime.run_schedules() == 1
+    [run] = await runtime.list(kind="hourly")
+    assert run.schedule_id == s.id and run.actor.id == "scheduler"
+    after = await runtime.get_schedule(s.id)
+    assert after.last_run_at is not None and after.next_run_at > dt.datetime.now(dt.UTC)
+
+    await runtime.pause_schedule(s.id, actor=VEX)
+    await runtime.cancel(run.id)
+    await _due(s.id)
+    assert await runtime.run_schedules() == 0  # paused: nothing, but the time moves on
+    assert (await runtime.get_schedule(s.id)).next_run_at > dt.datetime.now(dt.UTC)
+    assert len(await runtime.list(kind="hourly")) == 1
+
+
+async def test_resume_does_not_catch_up(make_runtime):
+    runtime = await make_runtime(_hourly([]), schedulable=["hourly"], start=False)
+    s = await runtime.create_schedule("h", "hourly", "*/5 * * * *")
+    await runtime.pause_schedule(s.id)
+    await _due(s.id)
+    resumed = await runtime.resume_schedule(s.id, actor=VEX)
+    assert resumed.paused_at is None and resumed.next_run_at > dt.datetime.now(dt.UTC)
+    assert await runtime.run_schedules() == 0 and await runtime.list(kind="hourly") == []
+
+
+async def test_schedule_does_not_overlap_and_run_now_works_when_paused(make_runtime):
+    runtime = await make_runtime(_hourly([]), schedulable=["hourly"], start=False)
+    s = await runtime.create_schedule("h", "hourly", "0 * * * *")
+    await runtime.pause_schedule(s.id)
+    first = await runtime.run_schedule(s.id, actor=VEX)
+    assert first.created and first.run.schedule_id == s.id and first.run.actor == VEX
+    assert not (await runtime.run_schedule(s.id)).created  # still queued: no second run
+
+
+async def test_schedule_validation_and_crud(make_runtime):
+    runtime = await make_runtime(_hourly([]), schedulable=["hourly"], start=False)
+    with pytest.raises(InvalidJob):
+        await runtime.create_schedule("a", "hourly", "not cron")
+    with pytest.raises(InvalidJob):
+        await runtime.create_schedule("a", "hourly", "0 0 * * * *")  # six fields
+    with pytest.raises(InvalidJob):
+        await runtime.create_schedule("a", "hidden", "0 * * * *")  # registered, not schedulable
+    with pytest.raises(InvalidJob):
+        await runtime.create_schedule("a", "nope", "0 * * * *")
+    s = await runtime.create_schedule("a", "hourly", "0 * * * *", subject="x", actor=VEX)
+    with pytest.raises(JobConflict):
+        await runtime.create_schedule("a", "hourly", "0 * * * *")
+    seeded = await runtime.ensure_schedule("seed", "hidden", "0 3 * * *")  # seeding allows any kind
+    assert (await runtime.ensure_schedule("seed", "hidden", "0 4 * * *")).cron == seeded.cron  # left alone
+    edited = await runtime.update_schedule(s.id, cron="30 * * * *", subject=None, set_subject=True, actor=VEX)
+    assert (edited.cron, edited.subject) == ("30 * * * *", None)
+    await runtime.delete_schedule(s.id, actor=VEX)
+    assert [x.name for x in await runtime.list_schedules()] == ["seed"]
+    assert [r["action"] for r in await audit_rows("schedule.")] == [
+        "schedule.create",
+        "schedule.update",
+        "schedule.delete",
+    ]
+
+
+async def test_deleting_a_schedule_keeps_its_runs(make_runtime):
+    runtime = await make_runtime(_hourly([]), schedulable=["hourly"], start=False)
+    s = await runtime.create_schedule("h", "hourly", "0 * * * *")
+    run = (await runtime.run_schedule(s.id)).run
+    await runtime.delete_schedule(s.id)
+    assert (await runtime.get(run.id)).schedule_id is None

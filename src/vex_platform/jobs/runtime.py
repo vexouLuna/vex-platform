@@ -40,6 +40,7 @@ from .errors import InvalidJob, JobConflict, JobNotFound, RunStopped, SkipTo, St
 from .events import RunEvents
 from .registry import JobKind, Registry
 from .run import ACTIVE, FINISHED, SELECT, STATES, JobRun
+from .schedules import SchedulesMixin
 
 log = structlog.get_logger(__name__)
 
@@ -116,7 +117,7 @@ class _Worker(procrastinate.worker.Worker):
         pass  # procrastinate's own asyncio.Semaphore, created in __init__ and _run_loop: unused
 
 
-class JobRuntime:
+class JobRuntime(SchedulesMixin):
     """
     ``conninfo``: the database; the runtime keeps its own psycopg pool with ``search_path`` set to
     ``schema``, where ``migrations.jobs_sql`` created the tables.
@@ -124,6 +125,8 @@ class JobRuntime:
     When set, every action on a run (``job.enqueue``, ``job.cancel`` ...) writes an audit row in the
     same transaction, and ``ctx.audit`` works in steps.
     ``concurrency``: runs at once, changeable with ``set_concurrency`` up to ``max_concurrency``.
+    ``schedulable``: the kinds an admin may put on a schedule through the API (``create_schedule``);
+    ``ensure_schedule`` seeds any kind. ``schedule_interval``: seconds between ticks that enqueue due schedules.
     ``context_factory(ctx)``: what step functions receive instead of the ``StepContext``, for an
     application's own context type.
     """
@@ -145,6 +148,8 @@ class JobRuntime:
         shutdown_timeout: float = 10.0,
         poll_interval: float = 5.0,
         reconcile_interval: float = 60.0,
+        schedulable: Iterable[str] = (),
+        schedule_interval: float = 30.0,
     ) -> None:
         registry.validate()
         self.registry = registry
@@ -157,6 +162,8 @@ class JobRuntime:
         self.shutdown_timeout = shutdown_timeout
         self.poll_interval = poll_interval
         self.reconcile_interval = reconcile_interval
+        self.schedulable = frozenset(schedulable)
+        self.schedule_interval = schedule_interval
         self.limiter = Limiter(min(concurrency, max_concurrency))
         self.hooks: list[Hook] = []
         self.stopping = False
@@ -194,6 +201,7 @@ class JobRuntime:
         self._background = [
             asyncio.create_task(self.events.run_forever(), name="vex-jobs-events"),
             asyncio.create_task(self._reconcile_forever(), name="vex-jobs-reconcile"),
+            asyncio.create_task(self._schedules_forever(), name="vex-jobs-schedules"),
         ]
         worker = _Worker(
             app=self.app,
@@ -539,6 +547,7 @@ class JobRuntime:
         merge: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
         scope: str | None = None,
         parent_id: int | None = None,
+        schedule_id: int | None = None,
         request_id: str | None = None,
         conn: AsyncConnection[Any] | None = None,
     ) -> Enqueued:
@@ -584,6 +593,7 @@ class JobRuntime:
                                 actor,
                                 scope,
                                 parent_id,
+                                schedule_id,
                             )
                     except errors.UniqueViolation:
                         continue  # a concurrent enqueue won: go and find its run
@@ -633,12 +643,14 @@ class JobRuntime:
         actor: Actor,
         scope: str | None,
         parent_id: int | None = None,
+        schedule_id: int | None = None,
     ) -> JobRun:
         row = await self._one(
             conn,
             "INSERT INTO job_runs (kind, subject, payload, state, step, pause_before, not_before, queued_key,"
-            " active_key, actor_kind, actor_id, actor_login, via, scope, parent_id) VALUES (%s, %s, %s, %s, %s,"
-            f" %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {SELECT}",
+            " active_key, actor_kind, actor_id, actor_login, via, scope, parent_id, schedule_id)"
+            " VALUES (%s, %s, %s, %s,"
+            f" %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {SELECT}",
             (
                 kind,
                 subject,
@@ -655,6 +667,7 @@ class JobRuntime:
                 actor.via,
                 scope,
                 parent_id,
+                schedule_id,
             ),
         )
         assert row is not None
@@ -953,6 +966,14 @@ class JobRuntime:
                 await self.reconcile()
             except Exception:
                 log.exception("jobs.reconcile_failed")
+
+    async def _schedules_forever(self) -> None:
+        while True:
+            try:
+                await self.run_schedules()
+            except Exception:
+                log.exception("jobs.schedules_failed")
+            await asyncio.sleep(self.schedule_interval)
 
     # ---- execution -----------------------------------------------------------------------------
 

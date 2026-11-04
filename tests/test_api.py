@@ -376,3 +376,36 @@ def test_decode_cursor_ints_rejects_non_integer_keys():
         with pytest.raises(ApiError) as e:
             decode_cursor(encode_cursor(bad), size=1, ints=True)
         assert e.value.code == "bad_cursor"
+
+
+async def test_schedule_routes(make_runtime):
+    registry = Registry()
+
+    @registry.step()
+    async def noop(ctx):
+        pass
+
+    registry.kind("job", ["noop"])
+    runtime = await make_runtime(registry, schedulable=["job"], start=False)
+    vex = {"x-test-user": "vex"}
+    async with client(make_app(runtime)) as c:
+        r = await c.get("/api/v2/schedules", headers=vex)
+        assert r.json() == {"items": [], "kinds": ["job"]}
+        r = await c.post("/api/v2/schedules", json={"name": "n", "kind": "job", "cron": "bad"}, headers=vex)
+        assert (r.status_code, r.json()["code"]) == (422, "invalid_job")
+        r = await c.post("/api/v2/schedules", json={"name": "n", "kind": "job", "cron": "0 3 * * *"}, headers=vex)
+        assert r.status_code == 201 and r.json()["actor"]["login"] == "vex"
+        sid = r.json()["id"]
+        r = await c.post("/api/v2/schedules", json={"name": "n", "kind": "job", "cron": "0 3 * * *"}, headers=vex)
+        assert r.status_code == 409
+        r = await c.patch(f"/api/v2/schedules/{sid}", json={"cron": "0 4 * * *"}, headers=vex)
+        assert r.json()["cron"] == "0 4 * * *"
+        r = await c.post(f"/api/v2/schedules/{sid}/pause", headers=vex)
+        assert r.json()["paused_at"] is not None
+        r = await c.post(f"/api/v2/schedules/{sid}/run-now", headers=vex)
+        assert r.status_code == 201 and r.json()["schedule_id"] == sid
+        r = await c.post(f"/api/v2/schedules/{sid}/resume", headers=vex)
+        assert r.json()["paused_at"] is None
+        assert (await c.delete(f"/api/v2/schedules/{sid}", headers=vex)).status_code == 204
+        r = await c.post(f"/api/v2/schedules/{sid}/pause", headers=vex)
+        assert r.status_code == 404

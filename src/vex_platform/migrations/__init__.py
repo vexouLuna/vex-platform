@@ -12,7 +12,8 @@ vex-platform version is installed when it runs:
 
 ``jobs_sql(1)`` is procrastinate 3.10.0's schema plus ``job_runs`` and ``job_run_events``, all in their own
 Postgres schema. ``jobs_sql(2)`` adds ``job_runs.scope``, ``jobs_sql(3)`` ``job_runs.parent_id``, ``jobs_sql(4)`` the
-``debug`` event level and an index for pruning progress reports, ``jobs_sql(5)`` ``job_runs.dismissed_at``. Each later
+``debug`` event level and an index for pruning progress reports, ``jobs_sql(5)`` ``job_runs.dismissed_at``,
+``jobs_sql(6)`` ``job_schedules`` and ``job_runs.schedule_id``. Each later
 revision (a procrastinate bump, a new column) is applied by a new Alembic revision in each application, and a
 vex-platform release that reads it says so in its notes.
 """
@@ -32,6 +33,7 @@ JOBS_REVISIONS: dict[int, tuple[str, ...]] = {
     3: ("jobs_0003.sql",),
     4: ("jobs_0004.sql",),
     5: ("jobs_0005.sql",),
+    6: ("jobs_0006.sql",),
 }
 AUDIT_REVISIONS: dict[int, tuple[str, ...]] = {
     1: ("audit_0001.sql",),

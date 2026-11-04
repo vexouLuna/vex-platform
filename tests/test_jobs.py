@@ -786,3 +786,38 @@ async def test_requeue_gives_up_queued_key_held_by_another_queued_run(make_runti
     async with runtime.transaction() as c:  # a retry/defer/interrupt of the running run
         back = await runtime._update(c, first.run.id, state="queued")
     assert back.state == "queued" and back.queued_key is None
+
+
+async def test_dismiss_hides_a_failed_run_from_counts_until_retried(make_runtime):
+    registry = Registry()
+
+    @registry.step()
+    async def refuse(ctx):
+        raise StepRefused("no consent")
+
+    registry.kind("refuse2", ["refuse"], retry_base_seconds=0)
+    runtime = await make_runtime(registry)
+    run = await wait_for(runtime, (await runtime.enqueue("refuse2")).run.id, ["failed"])
+    assert (await runtime.counts())["failed"] == 1
+
+    done = await runtime.dismiss(run.id, actor=VEX)
+    assert done.dismissed_at is not None and done.state == "failed"
+    assert (await runtime.dismiss(run.id)).dismissed_at == done.dismissed_at  # again: no change
+    assert (await runtime.counts())["failed"] == 0
+    assert (await runtime.counts(include_dismissed=True))["failed"] == 1
+    assert [r.id for r in await runtime.list(states=["failed"], dismissed=False)] == []
+    assert [r.id for r in await runtime.list(states=["failed"])] == [run.id]  # history keeps it
+    [row] = await audit_rows("job.dismiss")
+    assert row["before"] == {"state": "failed"}
+
+    again = await runtime.retry(run.id)  # a retry undoes it
+    assert again.dismissed_at is None
+
+
+async def test_dismiss_only_finished_failures(make_runtime):
+    calls: list[str] = []
+    runtime = await make_runtime(three_steps(calls), start=False)
+    run = (await runtime.enqueue("abc")).run
+    with pytest.raises(JobConflict):
+        await runtime.dismiss(run.id)  # queued
+    assert (await runtime.dismiss((await runtime.cancel(run.id)).id)).dismissed_at is not None

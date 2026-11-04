@@ -398,11 +398,13 @@ class JobRuntime:
         kind: str | None = None,
         subject: str | None = None,
         parent_id: int | None = None,
+        dismissed: bool | None = None,
         before_id: int | None = None,
         limit: int = 50,
         conn: AsyncConnection[Any] | None = None,
     ) -> builtins.list[JobRun]:
-        """Newest first; with ``parent_id``, only the runs that run queued."""
+        """Newest first; with ``parent_id``, only the runs that run queued; ``dismissed`` True/False keeps
+        only the dismissed/undismissed ones (None: all)."""
         clauses: builtins.list[str] = ["TRUE"]
         params: builtins.list[Any] = []
         if states:
@@ -420,6 +422,8 @@ class JobRuntime:
         if parent_id is not None:
             clauses.append("parent_id = %s")
             params.append(parent_id)
+        if dismissed is not None:
+            clauses.append("dismissed_at IS NOT NULL" if dismissed else "dismissed_at IS NULL")
         if before_id is not None:
             clauses.append("id < %s")
             params.append(before_id)
@@ -437,11 +441,13 @@ class JobRuntime:
         kind: str | None = None,
         subject: str | None = None,
         since: dt.datetime | None = None,
+        include_dismissed: bool = False,
         conn: AsyncConnection[Any] | None = None,
     ) -> dict[str, int]:
         """How many runs are in each state (every state, 0 when none). With ``since``, finished runs
-        count only when they finished at or after it; active runs always count."""
-        clauses: builtins.list[str] = ["TRUE"]
+        count only when they finished at or after it; active runs always count. Dismissed runs are left
+        out unless ``include_dismissed``."""
+        clauses: builtins.list[str] = ["TRUE" if include_dismissed else "dismissed_at IS NULL"]
         params: builtins.list[Any] = []
         if kind is not None:
             clauses.append("kind = %s")
@@ -784,6 +790,7 @@ class JobRuntime:
                         cancel_requested=False,
                         pause_next=False,
                         finished_at=None,
+                        dismissed_at=None,
                         procrastinate_job_id=None,
                         **values,
                     )
@@ -797,6 +804,26 @@ class JobRuntime:
             if values:
                 after["pause_before"] = values["pause_before"]
             await self._audit(c, "job.retry", new, actor, request_id, before={"state": run.state}, after=after)
+        return new
+
+    async def dismiss(
+        self,
+        run_id: int,
+        *,
+        actor: Actor = SYSTEM,
+        request_id: str | None = None,
+        conn: AsyncConnection[Any] | None = None,
+    ) -> JobRun:
+        """Take a failed or cancelled run out of failure alerts and counts; it stays in history. A retry
+        undoes it. Dismissing a dismissed run changes nothing."""
+        async with self.transaction(conn) as c:
+            run = await self._lock_run(c, run_id)
+            if run.state not in ("failed", "cancelled"):
+                raise JobConflict(f"run {run_id} is {run.state}; only failed or cancelled runs can be dismissed")
+            if run.dismissed_at is not None:
+                return run
+            new = await self._update(c, run_id, dismissed_at=_now())
+            await self._audit(c, "job.dismiss", new, actor, request_id, before={"state": run.state})
         return new
 
     async def cancel(

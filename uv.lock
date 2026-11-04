@@ -945,5 +945,5 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "ruff", specifier = ">=0.17.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.1.5" },
-    { name = "types-croniter", specifier = ">=6.0.0" },
+    { name = "types-croniter", specifier = ">=6.2.4.20261006" },
 ]

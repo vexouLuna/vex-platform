@@ -286,8 +286,15 @@ async def test_jobs_routes(make_runtime):
         assert r.json()["state"] == "cancelled"
         r = await c.post(f"/api/v2/jobs/{job['id']}/pause", headers=vex)
         assert (r.status_code, r.json()["code"]) == (409, "job_conflict")
+        r = await c.post(f"/api/v2/jobs/{job['id']}/dismiss", headers=vex)
+        assert r.json()["dismissed_at"] is not None
+        r = await c.get("/api/v2/jobs", params={"state": ["cancelled"], "dismissed": False}, headers=vex)
+        assert r.json()["items"] == []
+        r = await c.get("/api/v2/jobs/counts", headers=vex)
+        assert r.json()["counts"]["cancelled"] == 0
         r = await c.post(f"/api/v2/jobs/{job['id']}/retry", headers=vex)
         assert r.json()["state"] == "queued"
+        assert r.json()["dismissed_at"] is None
         gate.set()
         await wait_for(runtime, job["id"], ["succeeded"])
 
@@ -310,7 +317,7 @@ async def test_jobs_routes(make_runtime):
         assert r.json()["pause_before"] == []
 
     actions = [r["action"] for r in await audit_rows("job.")]
-    assert actions == ["job.enqueue", "job.update", "job.resume", "job.cancel", "job.retry", "job.retry"]
+    assert actions == ["job.enqueue", "job.update", "job.resume", "job.cancel", "job.dismiss", "job.retry", "job.retry"]
 
 
 @pytest.mark.usefixtures("dsn")

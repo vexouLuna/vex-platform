@@ -30,7 +30,7 @@ disagree, fix one of them in the same change.
 - **Actions** are dotted lowercase `noun.verb`, and nouns may nest. Examples: `vod.update`, `vod.hide`, `vod.chapters.replace`, `cc.create`, `storage.delete`, `setting.update`, `job.cancel`.
   - An HTTP method or a path is never an action; `AuditEntry` refuses one.
   - Actions the package writes itself:
-    - `job.enqueue`, `job.merge`, `job.pause`, `job.resume`, `job.retry`, `job.cancel`, `job.update`
+    - `job.enqueue`, `job.merge`, `job.pause`, `job.resume`, `job.retry`, `job.cancel`, `job.dismiss`, `job.update`
     - `request.denied`, `request.failed`
 - **Log events** are dotted `area.what_happened`. Examples: `jobs.step_failed`, `audit.refusal_write_failed`, `http.request`.
 

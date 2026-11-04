@@ -1,11 +1,11 @@
 """The standard job routes, mounted by each application under its ``/api/v2``.
 
-    GET    /jobs                      ?state=&kind=&subject=&parent=&cursor=&limit=
-    GET    /jobs/counts               ?kind=&subject=&since= (runs per state)
+    GET    /jobs                      ?state=&kind=&subject=&parent=&dismissed=&cursor=&limit=
+    GET    /jobs/counts               ?kind=&subject=&since=&include_dismissed= (runs per state)
     POST   /jobs                      queue a run
     GET    /jobs/{id}
     PATCH  /jobs/{id}                 pause_before, pause_next
-    POST   /jobs/{id}/pause|resume|retry|cancel   retry: step, at, pause_before
+    POST   /jobs/{id}/pause|resume|retry|cancel|dismiss   retry: step, at, pause_before
     GET    /jobs/{id}/events          ?cursor= (tail: pass back next_cursor, it is never null)
     GET    /jobs/{id}/related         the tree of runs it is in (who queued whom)
     GET    /job-kinds
@@ -60,6 +60,9 @@ class JobOut(ApiModel):
     updated_at: UtcDatetime
     started_at: UtcDatetime | None
     finished_at: UtcDatetime | None
+    dismissed_at: UtcDatetime | None = Field(
+        default=None, description="When a failed or cancelled run was dismissed: out of alerts and counts, still listed"
+    )
 
 
 class RelatedOut(ApiModel):
@@ -164,6 +167,7 @@ def jobs_router(
             updated_at=run.updated_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
+            dismissed_at=run.dismissed_at,
         )
 
     async def call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -185,6 +189,7 @@ def jobs_router(
         kind: str | None = None,
         subject: str | None = None,
         parent: Annotated[int | None, Query(description="Only the runs this run queued")] = None,
+        dismissed: Annotated[bool | None, Query(description="true: only dismissed runs; false: leave them out")] = None,
         cursor: str | None = None,
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 50,
     ) -> Page[Any]:
@@ -195,6 +200,7 @@ def jobs_router(
             kind=kind,
             subject=subject,
             parent_id=parent,
+            dismissed=dismissed,
             before_id=int(key[0]) if key else None,
             limit=limit + 1,
         )
@@ -208,8 +214,11 @@ def jobs_router(
         since: Annotated[
             UtcDatetime | None, Query(description="Count finished runs only from this time; active ones always")
         ] = None,
+        include_dismissed: Annotated[
+            bool, Query(description="Count dismissed runs too (default: leave them out)")
+        ] = False,
     ) -> JobCountsOut:
-        counts = await runtime.counts(kind=kind, subject=subject, since=since)
+        counts = await runtime.counts(kind=kind, subject=subject, since=since, include_dismissed=include_dismissed)
         return JobCountsOut(counts=counts, total=sum(counts.values()))
 
     @router.post("/jobs", response_model=JobOut, status_code=status.HTTP_201_CREATED)
@@ -258,6 +267,10 @@ def jobs_router(
     @router.post("/jobs/{run_id}/cancel", response_model=JobOut)
     async def cancel_job(run_id: int, request: Request) -> JobOut:
         return out(await call(runtime.cancel, run_id, **who(request)))
+
+    @router.post("/jobs/{run_id}/dismiss", response_model=JobOut)
+    async def dismiss_job(run_id: int, request: Request) -> JobOut:
+        return out(await call(runtime.dismiss, run_id, **who(request)))
 
     @router.get("/jobs/{run_id}/events", response_model=EventPage)
     async def job_events(

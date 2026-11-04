@@ -31,6 +31,7 @@ disagree, fix one of them in the same change.
   - An HTTP method or a path is never an action; `AuditEntry` refuses one.
   - Actions the package writes itself:
     - `job.enqueue`, `job.merge`, `job.pause`, `job.resume`, `job.retry`, `job.cancel`, `job.dismiss`, `job.update`
+    - `schedule.create`, `schedule.update`, `schedule.delete`, `schedule.pause`, `schedule.resume`, `schedule.run_now`
     - `request.denied`, `request.failed`
 - **Log events** are dotted `area.what_happened`. Examples: `jobs.step_failed`, `audit.refusal_write_failed`, `http.request`.
 
@@ -98,7 +99,7 @@ There is one table shape, `audit_log`, created by `migrations.audit_sql(1, table
 ### Tables
 
 - Everything lives in its own Postgres schema, `jobs` by default.
-- **Authoritative record:** `job_runs`, together with its log `job_run_events`. Both are created by `migrations.jobs_sql(1, schema=...)`, alongside procrastinate's own tables; `jobs_sql(2)` adds `job_runs.scope`, `jobs_sql(3)` adds `job_runs.parent_id` and `jobs_sql(4)` allows the `debug` event level.
+- **Authoritative record:** `job_runs`, together with its log `job_run_events`. Both are created by `migrations.jobs_sql(1, schema=...)`, alongside procrastinate's own tables; `jobs_sql(2)` adds `job_runs.scope`, `jobs_sql(3)` adds `job_runs.parent_id` and `jobs_sql(4)` allows the `debug` event level, `jobs_sql(5)` adds `job_runs.dismissed_at` and `jobs_sql(6)` adds `job_schedules` and `job_runs.schedule_id`.
 - **Procrastinate's side:** each queued run has one procrastinate job (`vex.run`, holding `run_id`). That job is transport only, and it is deleted once it finishes.
 
 ### States
@@ -161,6 +162,14 @@ async def download(ctx: StepContext) -> None:
 - **On a duplicate**, `enqueue` either returns the existing run, merges the new payload into it (`on_duplicate="merge"`, audited as `job.merge`), or raises `JobConflict`.
 - **`lock`:** `JobKind.lock(run)` returns a string, and runs with the same lock never run at the same time (procrastinate's `lock`).
   - A queued run holds its lock **even while it waits out a retry backoff** (a scheduled run does not, see "Scheduled runs"), so later runs with the same lock wait behind it. Keep lock keys narrow, for example the subject rather than the kind.
+
+### Schedules
+
+- `job_schedules` (`jobs_sql(6)`) holds recurring work: `name` (unique), `kind`, `subject`, `payload`, a five-field `cron` in **UTC**, `paused_at`, `last_run_at`, `next_run_at`. A run a schedule queued has `job_runs.schedule_id`.
+- The runtime ticks every `schedule_interval` seconds (`run_schedules`): each due, unpaused schedule enqueues one run (`active_key = schedule:<id>`, so a run still going blocks the next), and every due schedule moves to its next time after now.
+- **Pause** skips turns. **Resume** sets the next time from now; it does not run what was missed. **Run now** enqueues at once, paused or not, and leaves the timing alone.
+- `JobRuntime(schedulable=[...])` lists the kinds `POST /schedules` accepts. An application seeds its own with `await runtime.ensure_schedule(name, kind, cron)` (any registered kind; an existing one, edited or paused, is left alone).
+- Routes: `GET /schedules` (`{items, kinds}`), `POST /schedules`, `PATCH`/`DELETE /schedules/{id}`, `POST /schedules/{id}/pause|resume|run-now`.
 
 ### Runs that queue runs
 

@@ -6,11 +6,17 @@
     GET    /jobs/{id}
     PATCH  /jobs/{id}                 pause_before, pause_next
     POST   /jobs/{id}/pause|resume|retry|cancel|dismiss   retry: step, at, pause_before
+    GET    /schedules             {items, kinds}: kinds are the ones POST may schedule
+    POST   /schedules             name, kind, cron (UTC), subject, payload
+    PATCH  /schedules/{id}        cron, subject, payload
+    DELETE /schedules/{id}
+    POST   /schedules/{id}/pause|resume|run-now
     GET    /jobs/{id}/events          ?cursor= (tail: pass back next_cursor, it is never null)
     GET    /jobs/{id}/related         the tree of runs it is in (who queued whom)
     GET    /job-kinds
 
-Every change is audited by the runtime in its own transaction (``job.enqueue``, ``job.cancel`` ...).
+Every change is audited by the runtime in its own transaction (``job.enqueue``, ``job.cancel`` ...) or schedule
+(``schedule.pause`` ...).
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from .errors import InvalidJob, JobConflict, JobNotFound
 from .events import Level
 from .run import STATES, JobRun
 from .runtime import JobRuntime, kinds_info
+from .schedules import Schedule
 
 
 class ActorOut(ApiModel):
@@ -63,6 +70,41 @@ class JobOut(ApiModel):
     dismissed_at: UtcDatetime | None = Field(
         default=None, description="When a failed or cancelled run was dismissed: out of alerts and counts, still listed"
     )
+    schedule_id: int | None = Field(default=None, description="The schedule that queued this run, if one did")
+
+
+class ScheduleOut(ApiModel):
+    id: int
+    name: str
+    kind: str
+    subject: str | None
+    payload: dict[str, Any]
+    cron: str = Field(description="Five-field cron, evaluated in UTC")
+    paused_at: UtcDatetime | None
+    last_run_at: UtcDatetime | None
+    next_run_at: UtcDatetime
+    actor: ActorOut
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+
+
+class SchedulesOut(ApiModel):
+    items: list[ScheduleOut]
+    kinds: list[str] = Field(description="The kinds a schedule may be created for")
+
+
+class ScheduleIn(ApiModel):
+    name: str = Field(min_length=1, max_length=100)
+    kind: str
+    cron: str = Field(description="Five-field cron, UTC")
+    subject: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduleUpdateIn(ApiModel):
+    cron: str | None = None
+    subject: str | None = None
+    payload: dict[str, Any] | None = None
 
 
 class RelatedOut(ApiModel):
@@ -168,7 +210,11 @@ def jobs_router(
             started_at=run.started_at,
             finished_at=run.finished_at,
             dismissed_at=run.dismissed_at,
+            schedule_id=run.schedule_id,
         )
+
+    def schedule_out(s: Schedule) -> ScheduleOut:
+        return ScheduleOut(**{**s.__dict__, "actor": ActorOut(**s.actor.as_dict())})
 
     async def call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:
@@ -305,6 +351,54 @@ def jobs_router(
     async def related_jobs(run_id: int, limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 200) -> RelatedOut:
         root, runs, truncated = await call(runtime.related, run_id, limit=limit)
         return RelatedOut(root_id=root, items=[out(r) for r in runs], truncated=truncated)
+
+    @router.get("/schedules", response_model=SchedulesOut)
+    async def list_schedules() -> SchedulesOut:
+        items = [schedule_out(s) for s in await runtime.list_schedules()]
+        return SchedulesOut(items=items, kinds=sorted(runtime.schedulable))
+
+    @router.post("/schedules", response_model=ScheduleOut, status_code=status.HTTP_201_CREATED)
+    async def create_schedule(body: ScheduleIn, request: Request) -> ScheduleOut:
+        s = await call(
+            runtime.create_schedule,
+            body.name,
+            body.kind,
+            body.cron,
+            subject=body.subject,
+            payload=body.payload,
+            **who(request),
+        )
+        return schedule_out(s)
+
+    @router.patch("/schedules/{schedule_id}", response_model=ScheduleOut)
+    async def update_schedule(schedule_id: int, body: ScheduleUpdateIn, request: Request) -> ScheduleOut:
+        s = await call(
+            runtime.update_schedule,
+            schedule_id,
+            cron=body.cron,
+            subject=body.subject,
+            set_subject="subject" in body.model_fields_set,
+            payload=body.payload,
+            **who(request),
+        )
+        return schedule_out(s)
+
+    @router.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_schedule(schedule_id: int, request: Request) -> None:
+        await call(runtime.delete_schedule, schedule_id, **who(request))
+
+    @router.post("/schedules/{schedule_id}/pause", response_model=ScheduleOut)
+    async def pause_schedule(schedule_id: int, request: Request) -> ScheduleOut:
+        return schedule_out(await call(runtime.pause_schedule, schedule_id, **who(request)))
+
+    @router.post("/schedules/{schedule_id}/resume", response_model=ScheduleOut)
+    async def resume_schedule(schedule_id: int, request: Request) -> ScheduleOut:
+        return schedule_out(await call(runtime.resume_schedule, schedule_id, **who(request)))
+
+    @router.post("/schedules/{schedule_id}/run-now", response_model=JobOut, status_code=status.HTTP_201_CREATED)
+    async def run_schedule(schedule_id: int, request: Request) -> JobOut:
+        result = await call(runtime.run_schedule, schedule_id, **who(request))
+        return out(result.run)
 
     @router.get("/job-kinds", response_model=list[JobKindOut])
     async def job_kinds() -> list[JobKindOut]:

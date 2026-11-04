@@ -11,6 +11,12 @@ class JobNotFound(LookupError):
         self.run_id = run_id
 
 
+class ScheduleNotFound(JobNotFound):
+    def __init__(self, schedule_id: int) -> None:
+        LookupError.__init__(self, f"no schedule {schedule_id}")
+        self.run_id = schedule_id
+
+
 class JobConflict(Exception):
     """The run is in a state that does not allow the action; the message says why."""
 

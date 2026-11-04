@@ -40,6 +40,7 @@ COLUMNS = (
     "scope",
     "parent_id",
     "dismissed_at",
+    "schedule_id",
 )
 SELECT = ", ".join(COLUMNS)
 
@@ -69,6 +70,7 @@ class JobRun:
     scope: str | None = None
     parent_id: int | None = None
     dismissed_at: dt.datetime | None = None
+    schedule_id: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod

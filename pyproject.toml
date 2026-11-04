@@ -17,14 +17,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sqlalchemy = ["sqlalchemy[asyncio]>=2.1.5"]
+sqlalchemy = ["sqlalchemy[asyncio]>=2.1.8"]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
-    "sqlalchemy[asyncio]>=2.1.5",
+    "sqlalchemy[asyncio]>=2.1.8",
     "asyncpg>=0.29",
     "ruff>=0.17.1",
     "mypy>=2.4.0",

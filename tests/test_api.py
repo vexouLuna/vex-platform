@@ -361,3 +361,11 @@ def test_logging_json(capsys):
     assert lines[0]["event"] == "jobs.thing" and lines[0]["run_id"] == 3 and lines[0]["level"] == "info"
     assert "secret" not in lines[1]["event"] and "[redacted]" in lines[1]["event"]
     assert redact("?token=abc") == "?token=[redacted]"
+
+
+def test_decode_cursor_ints_rejects_non_integer_keys():
+    assert decode_cursor(encode_cursor([7]), size=1, ints=True) == [7]
+    for bad in (["a"], [True], [1.5]):
+        with pytest.raises(ApiError) as e:
+            decode_cursor(encode_cursor(bad), size=1, ints=True)
+        assert e.value.code == "bad_cursor"

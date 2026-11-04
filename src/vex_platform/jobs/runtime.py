@@ -284,6 +284,14 @@ class JobRuntime:
 
     async def _update(self, conn: AsyncConnection[Any], run_id: int, **values: Any) -> JobRun:
         sets = ", ".join(f"{k} = %({k})s" for k in values)
+        if values.get("state") == "queued" and "queued_key" not in values:
+            # Another queued run may already hold this run's (kind, queued_key) slot, which the unique
+            # index allows once; the requeued run gives its key up rather than violating it.
+            sets += (
+                ", queued_key = CASE WHEN EXISTS (SELECT 1 FROM job_runs o WHERE o.kind = job_runs.kind"
+                " AND o.queued_key = job_runs.queued_key AND o.state = 'queued' AND o.id <> job_runs.id)"
+                " THEN NULL ELSE queued_key END"
+            )
         params = {k: Jsonb(v) if k == "payload" else v for k, v in values.items()}
         row = await self._one(
             conn, f"UPDATE job_runs SET {sets} WHERE id = %(_id)s RETURNING {SELECT}", {**params, "_id": run_id}

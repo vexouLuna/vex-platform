@@ -188,7 +188,7 @@ def jobs_router(
         cursor: str | None = None,
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 50,
     ) -> Page[Any]:
-        key = decode_cursor(cursor, size=1)
+        key = decode_cursor(cursor, size=1, ints=True)
         runs = await call(
             runtime.list,
             states=state,
@@ -270,7 +270,7 @@ def jobs_router(
     ) -> EventPage:
         await call(runtime.get, run_id)
         if before is not None or tail:
-            key = decode_cursor(before, size=1)
+            key = decode_cursor(before, size=1, ints=True)
             rows = await runtime.events.list(
                 run_id, before=int(key[0]) if key else None, newest=True, min_level=min_level, limit=limit + 1
             )
@@ -281,7 +281,7 @@ def jobs_router(
                 next_cursor=encode_cursor([items[-1].id if items else 0]),
                 prev_cursor=encode_cursor([items[0].id]) if older else None,
             )
-        key = decode_cursor(cursor, size=1)
+        key = decode_cursor(cursor, size=1, ints=True)
         after = int(key[0]) if key else 0
         rows = await runtime.events.list(run_id, after=after, min_level=min_level, limit=limit)
         items = [EventOut(**r) for r in rows]

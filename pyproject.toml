@@ -10,7 +10,7 @@ dependencies = [
     # version's. Bumping it means shipping procrastinate's migrations as a new revision there.
     "procrastinate==3.10.0",
     "psycopg[binary,pool]>=3.3.6",
-    "fastapi>=0.143.3",
+    "fastapi>=0.162.1",
     "pydantic>=2.14.1",
     "structlog>=26.1.0",
     "croniter>=6.0.0",

@@ -1,5 +1,11 @@
 # vex-platform
 
+<!-- conventions:begin: synced from vexouLuna/conventions; edit it there, then run `conventions sync` -->
+[![CI](https://github.com/vexouLuna/vex-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vexouLuna/vex-platform/actions/workflows/ci.yml?query=branch%3Amain)
+[![version](https://img.shields.io/github/v/tag/vexouLuna/vex-platform?sort=semver&label=version)](https://github.com/vexouLuna/vex-platform/tags)
+[![conventions v4.0.0](https://img.shields.io/badge/conventions-v4.0.0-blue)](https://github.com/vexouLuna/conventions/tree/v4.0.0)
+<!-- conventions:end -->
+
 Shared jobs, API and audit building blocks for [twitch-archive](https://github.com/vexouLuna/twitch-archive)
 and doomtp-bot, and the conventions both follow ([docs/conventions.md](docs/conventions.md)).
 

@@ -28,7 +28,7 @@ dev = [
     "asyncpg>=0.29",
     "ruff>=0.17.1",
     "mypy>=2.4.0",
-    "types-croniter>=6.0.0",
+    "types-croniter>=6.2.4.20261006",
 ]
 
 [build-system]

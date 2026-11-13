@@ -1018,6 +1018,13 @@ class JobRuntime(SchedulesMixin):
             if row is None:
                 return  # paused or cancelled since it was fetched
             run = JobRun.from_row(row)
+            if run.cancel_requested:
+                # A cancel that reached a run whose worker then died: reconcile() requeued it with the flag set.
+                async with self.transaction() as c:
+                    run = await self._update(c, run_id, state="cancelled", finished_at=_now())
+                log.info("jobs.cancelled_before_step", run_id=run_id, step=run.step)
+                self._hook("cancelled", run)
+                return
             if kind is None:
                 async with self.transaction() as c:
                     run = await self._update(

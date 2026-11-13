@@ -415,6 +415,21 @@ async def test_reconcile_recovers_a_crashed_run(make_runtime):
     assert calls == ["b", "c"]
 
 
+async def test_requeued_run_with_cancel_requested_runs_no_step(make_runtime):
+    calls: list[str] = []
+    runtime = await make_runtime(three_steps(calls), start=False)
+    run = (await runtime.enqueue("abc")).run
+    # A crash after cancel() flagged a running run: marked running at step b, its job gone, flag set.
+    await jobs_sql("DELETE FROM jobs.procrastinate_jobs")
+    await jobs_sql(
+        "UPDATE jobs.job_runs SET state = 'running', step = 'b', cancel_requested = true WHERE id = %s", (run.id,)
+    )
+    await runtime.start()  # reconciles first: requeues the run
+    run = await wait_for(runtime, run.id, ["cancelled"])
+    assert calls == []
+    assert run.step == "b"
+
+
 async def jobs_sql(sql: str, params: Any = None) -> list[tuple[Any, ...]]:
     async with await psycopg.AsyncConnection.connect(DSN, autocommit=True) as conn:
         await conn.execute("SET search_path TO jobs")  # procrastinate's triggers use unqualified names

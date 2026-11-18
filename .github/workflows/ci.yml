@@ -7,10 +7,22 @@ on:
 
 jobs:
   conventions:
-    uses: vexouLuna/conventions/.github/workflows/conventions-check.yml@v4.0.0
+    uses: vexouLuna/conventions/.github/workflows/conventions-check.yml@v4.1.0
     secrets:
       CONVENTIONS_PRIVATE_PATTERNS: ${{ secrets.CONVENTIONS_PRIVATE_PATTERNS }}
   ci:
-    uses: vexouLuna/conventions/.github/workflows/python-ci.yml@v4.0.0
+    uses: vexouLuna/conventions/.github/workflows/python-ci.yml@v4.1.0
     with:
       postgres: true
+
+  review:
+    # After the checks: no review, and no usage spent, on a change that fails them.
+    needs: [conventions, ci]
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    uses: vexouLuna/conventions/.github/workflows/claude-review.yml@v4.1.0
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

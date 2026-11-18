@@ -13,7 +13,7 @@ dependencies = [
     "fastapi>=0.143.3",
     "pydantic>=2.14.1",
     "structlog>=26.1.0",
-    "croniter>=6.0.0",
+    "croniter>=6.2.4",
 ]
 
 [project.optional-dependencies]

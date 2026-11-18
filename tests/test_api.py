@@ -20,6 +20,7 @@ from vex_platform.api import (
     RequestIdMiddleware,
     decode_cursor,
     encode_cursor,
+    file_in_use,
     install_error_handlers,
     page_of,
 )
@@ -409,3 +410,27 @@ async def test_schedule_routes(make_runtime):
         assert (await c.delete(f"/api/v2/schedules/{sid}", headers=vex)).status_code == 204
         r = await c.post(f"/api/v2/schedules/{sid}/pause", headers=vex)
         assert r.status_code == 404
+
+
+async def test_file_in_use_names_the_file_and_what_uses_it() -> None:
+    app = FastAPI()
+    install_error_handlers(app)
+
+    @app.delete("/api/v2/songs/{song_id}")
+    async def delete_song(song_id: str, detail: str | None = None) -> None:
+        raise file_in_use("song", song_id, [("vod", "123"), ("vod", "456")], detail)
+
+    async with client(app) as c:
+        r = await c.delete("/api/v2/songs/song-1")
+        assert r.status_code == 409 and r.headers["content-type"] == "application/problem+json"
+        assert r.json() == {
+            "type": "about:blank",
+            "title": "Conflict",
+            "status": 409,
+            "code": "file_in_use",
+            "detail": "the song is still used by vod 123, vod 456",
+            "file": {"kind": "song", "id": "song-1"},
+            "used_by": [{"kind": "vod", "id": "123"}, {"kind": "vod", "id": "456"}],
+        }
+        r = await c.delete("/api/v2/songs/song-1", params={"detail": "give them another song first"})
+        assert r.json()["detail"] == "give them another song first"

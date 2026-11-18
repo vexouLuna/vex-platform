@@ -54,6 +54,7 @@ These rules apply to everything under `/api/v2`. The v1 routes keep their curren
   - `code` is a stable snake_case string that clients may branch on; `detail` is written for people.
   - A validation failure is a 422 with code `invalid`, plus `errors: [{loc, msg, type}]`.
   - Routes raise `ApiError(status, code, detail)`. `install_error_handlers(app)` converts FastAPI's own errors under the prefix and leaves every other path as it was.
+  - A stored file that something still uses is refused with `raise file_in_use(kind, id, used_by)`: 409 `file_in_use` with `file: {kind, id}` and `used_by: [{kind, id}]` (e.g. a song a VOD's censor range plays), the same shape for every file kind.
 - **Request IDs:** every response carries `X-Request-ID` (`RequestIdMiddleware`).
   - The incoming header is kept when it is 1 to 128 characters of `[A-Za-z0-9._:-]`; otherwise a new ID is generated.
   - The ID is bound into every log line and stored on audit rows.

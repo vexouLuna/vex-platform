@@ -7,6 +7,7 @@ routes answer exactly as before.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from http import HTTPStatus
 from typing import Any
 
@@ -54,6 +55,18 @@ class ApiError(Exception):
         self.headers = headers
         self.extra = extra
         super().__init__(detail or self.code)
+
+
+def file_in_use(kind: str, file_id: str, used_by: Iterable[tuple[str, str]], detail: str | None = None) -> ApiError:
+    """409 ``file_in_use``: the stored file ``{kind, id}`` can't be deleted while ``used_by`` (``(kind, id)``
+    pairs, e.g. ``("vod", "123")``) still uses it. One shape for any file kind, so clients handle it once::
+
+        {"code": "file_in_use", "detail": ..., "file": {"kind": "song", "id": "song-1"},
+         "used_by": [{"kind": "vod", "id": "123"}]}
+    """
+    users = [{"kind": k, "id": i} for k, i in used_by]
+    default = f"the {kind} is still used by {', '.join(f'{u["kind"]} {u["id"]}' for u in users)}"
+    return ApiError(409, "file_in_use", detail or default, file={"kind": kind, "id": file_id}, used_by=users)
 
 
 def _title(status: int) -> str:

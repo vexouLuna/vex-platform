@@ -30,7 +30,7 @@ disagree, fix one of them in the same change.
 - **Actions** are dotted lowercase `noun.verb`, and nouns may nest. Examples: `vod.update`, `vod.hide`, `vod.chapters.replace`, `cc.create`, `storage.delete`, `setting.update`, `job.cancel`.
   - An HTTP method or a path is never an action; `AuditEntry` refuses one.
   - Actions the package writes itself:
-    - `job.enqueue`, `job.merge`, `job.pause`, `job.resume`, `job.retry`, `job.cancel`, `job.dismiss`, `job.update`
+    - `job.enqueue`, `job.merge`, `job.pause`, `job.resume`, `job.retry`, `job.cancel`, `job.dismiss`, `job.update`, `job.payload.update`
     - `schedule.create`, `schedule.update`, `schedule.delete`, `schedule.pause`, `schedule.resume`, `schedule.run_now`
     - `request.denied`, `request.failed`
 - **Log events** are dotted `area.what_happened`. Examples: `jobs.step_failed`, `audit.refusal_write_failed`, `http.request`.
@@ -171,6 +171,13 @@ async def download(ctx: StepContext) -> None:
 - **Pause** skips turns. **Resume** sets the next time from now; it does not run what was missed. **Run now** enqueues at once, paused or not, and leaves the timing alone.
 - `JobRuntime(schedulable=[...])` lists the kinds `POST /schedules` accepts. An application seeds its own with `await runtime.ensure_schedule(name, kind, cron)` (any registered kind; an existing one, edited or paused, is left alone).
 - Routes: `GET /schedules` (`{items, kinds}`), `POST /schedules`, `PATCH`/`DELETE /schedules/{id}`, `POST /schedules/{id}/pause|resume|run-now`.
+
+### Editing a payload
+
+- `set_payload(run_id, payload, expected_updated_at=)` (`PATCH /jobs/{id}` with `payload`, a JSON object, and `expected_updated_at`, the run's `updated_at` as read) replaces the whole payload of a run that is **not running**: queued, paused or finished. Its steps read the new one the next time it runs (a retry, a resume).
+- A running run, or one whose `updated_at` moved since it was read (it ran, a step saved progress), is a 409 `job_conflict`. The row lock makes a worker that starts the run meanwhile wait for the edit and start with the new payload.
+- The `PATCH` body is at most 1 MiB (413 `too_large`). With gates in the same body, both apply or neither does.
+- Audited as `job.payload.update`, `before` and `after` the whole payloads.
 
 ### Runs that queue runs
 

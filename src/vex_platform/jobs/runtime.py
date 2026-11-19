@@ -909,6 +909,32 @@ class JobRuntime(SchedulesMixin):
             )
         return new
 
+    async def set_payload(
+        self,
+        run_id: int,
+        payload: dict[str, Any],
+        *,
+        expected_updated_at: dt.datetime | None = None,
+        actor: Actor = SYSTEM,
+        request_id: str | None = None,
+        conn: AsyncConnection[Any] | None = None,
+    ) -> JobRun:
+        """Replace the payload of a run that is not running (queued, paused or finished): its steps read the new one
+        the next time it runs. ``expected_updated_at`` is the run's ``updated_at`` as the caller read it; a run that
+        changed since (it ran, a step saved progress) is a conflict, so an edit never overwrites what it didn't see.
+        Audited as ``job.payload.update`` with the whole payload before and after."""
+        async with self.transaction(conn) as c:
+            run = await self._lock_run(c, run_id)  # a worker starting it waits for this transaction
+            if run.state == "running":
+                raise JobConflict(f"run {run_id} is running; its payload can be edited once it stops")
+            if expected_updated_at is not None and run.updated_at != expected_updated_at:
+                raise JobConflict(f"run {run_id} changed since it was read; load it again and redo the edit")
+            if payload == run.payload:
+                return run
+            new = await self._update(c, run_id, payload=payload)
+            await self._audit(c, "job.payload.update", new, actor, request_id, before=run.payload, after=payload)
+        return new
+
     # ---- recovery ------------------------------------------------------------------------------
 
     async def reconcile(self) -> int:

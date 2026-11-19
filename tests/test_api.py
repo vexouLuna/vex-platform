@@ -434,3 +434,51 @@ async def test_file_in_use_names_the_file_and_what_uses_it() -> None:
         }
         r = await c.delete("/api/v2/songs/song-1", params={"detail": "give them another song first"})
         assert r.json()["detail"] == "give them another song first"
+
+
+async def test_editing_a_payload(make_runtime):
+    registry = Registry()
+    gate = asyncio.Event()
+    seen: list[dict[str, Any]] = []
+
+    @registry.step()
+    async def work(ctx):
+        seen.append(dict(ctx.payload))
+        await gate.wait()
+
+    registry.kind("edit", ["work"], description="Edit")
+    runtime = await make_runtime(registry)
+    vex = {"x-test-user": "vex"}
+    async with client(make_app(runtime)) as c:
+        job = (
+            await c.post("/api/v2/jobs", json={"kind": "edit", "paused": True, "payload": {"a": 1}}, headers=vex)
+        ).json()
+        url = f"/api/v2/jobs/{job['id']}"
+
+        r = await c.patch(url, json={"payload": {"a": 2}, "expected_updated_at": "2000-01-01T00:00:00Z"}, headers=vex)
+        assert r.status_code == 409 and r.json()["code"] == "job_conflict"  # read before it last changed
+        r = await c.patch(url, json={"payload": [1]}, headers=vex)
+        assert r.status_code == 422
+        r = await c.patch(url, json={"payload": None}, headers=vex)
+        assert r.status_code == 422
+        r = await c.patch(url, json={"payload": {"x": "y" * (1024 * 1024)}}, headers=vex)
+        assert r.status_code == 413 and r.json()["code"] == "too_large"
+
+        r = await c.patch(url, json={"payload": {"a": 2}, "expected_updated_at": job["updated_at"]}, headers=vex)
+        assert r.status_code == 200 and r.json()["payload"] == {"a": 2} and r.json()["state"] == "paused"
+        [row] = [row for row in await audit_rows("job.payload.update") if row["job_run_id"] == job["id"]]
+        assert (row["before"], row["after"], row["actor_id"]) == ({"a": 1}, {"a": 2}, "vex")
+
+        await c.post(f"{url}/resume", headers=vex)
+        await wait_for(runtime, job["id"], ["running"])
+        assert seen == [{"a": 2}]  # the step got the edited payload
+        r = await c.patch(url, json={"payload": {"a": 3}}, headers=vex)
+        assert r.status_code == 409 and "running" in r.json()["detail"]
+
+        gate.set()
+        await wait_for(runtime, job["id"], ["succeeded"])
+        # A finished run can be edited too (before a retry), but not its gates: both or neither.
+        r = await c.patch(url, json={"payload": {"a": 4}, "pause_next": True}, headers=vex)
+        assert r.status_code == 409 and (await runtime.get(job["id"])).payload["a"] != 4
+        r = await c.patch(url, json={"payload": {"a": 4}}, headers=vex)
+        assert r.json()["payload"] == {"a": 4}

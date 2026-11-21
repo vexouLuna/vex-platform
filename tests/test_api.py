@@ -32,7 +32,7 @@ from vex_platform.jobs.router import jobs_router
 from vex_platform.jobs.run import STATES
 from vex_platform.logging import configure_logging, redact
 
-from .conftest import AUDIT, DSN, audit_rows, wait_for
+from .conftest import AUDIT, DSN, audit_rows, until, wait_for
 
 
 def auth(request: Request) -> None:
@@ -470,7 +470,7 @@ async def test_editing_a_payload(make_runtime):
         assert (row["before"], row["after"], row["actor_id"]) == ({"a": 1}, {"a": 2}, "vex")
 
         await c.post(f"{url}/resume", headers=vex)
-        await wait_for(runtime, job["id"], ["running"])
+        await until(lambda: bool(seen))  # running is committed just before the step starts
         assert seen == [{"a": 2}]  # the step got the edited payload
         r = await c.patch(url, json={"payload": {"a": 3}}, headers=vex)
         assert r.status_code == 409 and "running" in r.json()["detail"]

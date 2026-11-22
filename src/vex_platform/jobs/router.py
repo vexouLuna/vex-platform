@@ -4,7 +4,7 @@
     GET    /jobs/counts               ?kind=&subject=&since=&include_dismissed= (runs per state)
     POST   /jobs                      queue a run
     GET    /jobs/{id}
-    PATCH  /jobs/{id}                 pause_before, pause_next
+    PATCH  /jobs/{id}                 pause_before, pause_next (active runs); payload (any run not running)
     POST   /jobs/{id}/pause|resume|retry|cancel|dismiss   retry: step, at, pause_before
     GET    /schedules             {items, kinds}: kinds are the ones POST may schedule
     POST   /schedules             name, kind, cron (UTC), subject, payload
@@ -150,9 +150,19 @@ class EnqueueIn(ApiModel):
     paused: bool = False
 
 
+# The largest PATCH /jobs/{id} body: payloads are progress notes and options, not data.
+MAX_PATCH_BYTES = 1024 * 1024
+
+
 class UpdateIn(ApiModel):
     pause_before: list[str] | None = Field(default=None, description="Steps to pause before; null: the kind's")
     pause_next: bool | None = None
+    payload: dict[str, Any] | None = Field(
+        default=None, description="The whole new payload, for a run that is not running (audited as job.payload.update)"
+    )
+    expected_updated_at: UtcDatetime | None = Field(
+        default=None, description="With payload: the run's updated_at as read; a run changed since is a 409"
+    )
 
 
 class ResumeIn(ApiModel):
@@ -287,14 +297,33 @@ def jobs_router(
     async def get_job(run_id: int) -> JobOut:
         return out(await call(runtime.get, run_id))
 
-    @router.patch("/jobs/{run_id}", response_model=JobOut)
+    async def bounded(request: Request) -> None:
+        if len(await request.body()) > MAX_PATCH_BYTES:
+            raise ApiError(413, detail=f"the body is over {MAX_PATCH_BYTES} bytes")
+
+    @router.patch("/jobs/{run_id}", response_model=JobOut, dependencies=[Depends(bounded)])
     async def update_job(run_id: int, body: UpdateIn, request: Request) -> JobOut:
         changes: dict[str, Any] = {}
         if "pause_before" in body.model_fields_set:
             changes["pause_before"] = body.pause_before
         if body.pause_next is not None:
             changes["pause_next"] = body.pause_next
-        return out(await call(runtime.update, run_id, **changes, **who(request)))
+        if "payload" in body.model_fields_set and body.payload is None:
+            raise ApiError(422, "invalid", "payload must be a JSON object")
+        if body.payload is None:
+            return out(await call(runtime.update, run_id, **changes, **who(request)))
+        async with runtime.transaction() as c:  # both edits or neither
+            run = await call(
+                runtime.set_payload,
+                run_id,
+                body.payload,
+                expected_updated_at=body.expected_updated_at,
+                conn=c,
+                **who(request),
+            )
+            if changes:
+                run = await call(runtime.update, run_id, **changes, conn=c, **who(request))
+        return out(run)
 
     @router.post("/jobs/{run_id}/pause", response_model=JobOut)
     async def pause_job(run_id: int, request: Request) -> JobOut:

@@ -23,7 +23,7 @@ sqlalchemy = ["sqlalchemy[asyncio]>=2.1.5"]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "httpx>=0.28.1",
+    "httpx>=0.29.0",
     "sqlalchemy[asyncio]>=2.1.5",
     "asyncpg>=0.29",
     "ruff>=0.17.1",
